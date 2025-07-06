@@ -18,11 +18,17 @@ from torch.distributed import destroy_process_group, init_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 
-from src.datasets import MaskedOneHotDataset, data_from_df
+from src.datasets import MaskedOneHotDataset, data_from_df, HDF5MaskedDataset
 from src.models import CNN_MLM
-from src.utils import load_pretrained_model, safe_save_model
+from src.utils import (
+    load_pretrained_model,
+    safe_save_model,
+    setup_slurm_distributed,
+    check_is_distributed,
+    get_num_cpu_available,
+)
 
-BASE_BATCH_SIZE = 64
+BASE_BATCH_SIZE = 128
 
 
 import torch
@@ -44,7 +50,7 @@ def run(config):
       - takes full-length logits from model(x_masked, att_mask)
       - splits masked vs. seen losses (weighted by weight_mask)
       - logs per-100-step losses
-      - uses OneCycleLR + gradient clipping
+      - uses OneCycleLR
     Assumes:
       MaskedOneHotDataset returns (x_masked, targets, att_mask, mask)
       with x_masked: (B, L, 5),
@@ -54,30 +60,102 @@ def run(config):
       model(x_masked, att_mask) -> logits (B, L, 4).
     """
 
+    if config.log_wandb:
+        # Lazy import of wandb, since logging to wandb is optional
+        import wandb
+
+    # DISTRIBUTION ============================================================
+    # Setup for distributed training
+    setup_slurm_distributed()
+    config.world_size = int(os.environ.get("WORLD_SIZE", 1))
+    config.distributed = check_is_distributed()
+
+    if config.world_size > 1 and not config.distributed:
+        raise EnvironmentError(
+            f"WORLD_SIZE is {config.world_size}, but not all other required"
+            " environment variables for distributed training are set."
+        )
+    # Work out the total batch size depending on the number of GPUs we are using
+    config.batch_size = config.batch_size_per_gpu * config.world_size
+
+    if config.distributed:
+        # For multiprocessing distributed training, gpu rank needs to be
+        # set to the global rank among all the processes.
+        config.global_rank = int(os.environ["RANK"])
+        config.local_rank = int(os.environ["LOCAL_RANK"])
+        print(
+            f"Rank {config.global_rank} of {config.world_size} on {gethostname()}"
+            f" (local GPU {config.local_rank} of {torch.cuda.device_count()})."
+            f" Communicating with master at {os.environ['MASTER_ADDR']}:{os.environ['MASTER_PORT']}"
+        )
+        dist.init_process_group(backend="nccl")
+    else:
+        config.global_rank = 0
+
+    # Suppress printing if this is not the master process for the node
+    if config.distributed and config.global_rank != 0:
+
+        def print_pass(*args, **kwargs):
+            pass
+
+        builtins.print = print_pass
+
+    print()
+    print("Configuration:")
+    print()
+    print(config)
+    print()
+    print(f"Found {torch.cuda.device_count()} GPUs and {get_num_cpu_available()} CPUs.")
+
+    # Check which device to use
+    use_cuda = not config.no_cuda and torch.cuda.is_available()
+
+    if config.distributed and not use_cuda:
+        raise EnvironmentError("Distributed training with NCCL requires CUDA.")
+    if not use_cuda:
+        raise EnvironmentError("Pretraining requires CUDA.")
+    elif config.local_rank is not None:
+        device = f"cuda:{config.local_rank}"
+    else:
+        device = "cuda"
+
+    print(f"Using device {device}", flush=True)
+
     weight_mask = 0.5
-    #if torch.cuda.is_available():
-    #    device = int(os.environ["LOCAL_RANK"])
-    #else:
-    #    device = "cpu"
-    device = int(os.environ["LOCAL_RANK"])
 
-    df = pd.read_csv(os.path.join(config.data_dir, "dev.csv"))
-    X, _ = data_from_df(df)
+    #df = pd.read_csv(os.path.join(config.data_dir, "pre_training.csv"))
+    #X, _ = data_from_df(df)
 
-    dataset = MaskedOneHotDataset(X, mask_ratio=config.mask_ratio, chunk_size=4)
+    #dataset = MaskedOneHotDataset(X, mask_ratio=config.mask_ratio, chunk_size=4)
+    #loader = DataLoader(
+    #    dataset,
+    #    batch_size=config.batch_size_per_gpu,
+    #   shuffle=False,
+    #    num_workers=4,
+    #    sampler=DistributedSampler(dataset),
+    #)
+
+    file_name = os.path.join(config.data_dir, "unseen.h5")
+    print(f"Pretrain File: {file_name}")
+    dataset = HDF5MaskedDataset(file_name, mask_ratio=0.5, token_size=4)
+    sampler = DistributedSampler(dataset, shuffle=True)
     loader = DataLoader(
         dataset,
-        batch_size=config.batch_size_per_gpu,
-        shuffle=False,
-        num_workers=4,
-        sampler=DistributedSampler(dataset),
+        batch_size=config.batch_size_per_gpu * config.world_size,
+        num_workers=2,
+        pin_memory=True,
+        prefetch_factor=2,
+        sampler = sampler,
+        drop_last = True
     )
-
-    model = CNN_MLM(max_len=config.max_len)
 
     if os.path.exists(config.checkpoint_path):
         print(f"Loading training snapshot from {config.checkpoint_path}")
         model, ckpt = load_pretrained_model(config.checkpoint_path)
+        current_epoch = ckpt["epoch"]
+    else:
+        model = CNN_MLM(max_len=config.max_len)
+        current_epoch = 1
 
     model.to(device)
     model = DDP(model, device_ids=[device])
@@ -93,10 +171,10 @@ def run(config):
     )
     criterion = nn.CrossEntropyLoss()
 
-    for epoch in range(1, config.epochs + 1):
+    for epoch in range(current_epoch, config.epochs + 1):
         total_loss_masked = total_acc_masked = count_masked = 0
         total_loss_seen = total_acc_seen = count_seen = 0
-
+        loader.sampler.set_epoch(epoch)
         for step, (x_masked, targets, att_mask, mask) in enumerate(loader, start=1):
             # --- Move to GPU ---
             x_masked = x_masked.to(device)  # (B, L, 5)
@@ -106,7 +184,7 @@ def run(config):
 
             # --- Forward ---
             logits = model(x_masked, att_mask)  # (B, L, 4)
-            print(logits.shape)
+            #print(logits.shape)
 
             preds = logits.argmax(dim=-1)  # (B, L)
 
@@ -171,17 +249,17 @@ def run(config):
             f"Masked Loss: {avg_loss_masked:.4f}, Acc: {avg_acc_masked:.2f}% | "
             f"Seen Loss: {avg_loss_seen:.4f}, Acc: {avg_acc_seen:.2f}%"
         )
-
-    safe_save_model(
-        {
-            "model": model,
-            "optimizer": optimizer,
-            "scheduler": scheduler,
-        },
-        config.checkpoint_path,
-        config=config,
-        epoch=epoch,
-    )
+        if config.global_rank == 0: 
+            safe_save_model(
+            {
+                "model": model,
+                "optimizer": optimizer,
+                "scheduler": scheduler,
+            },
+            config.checkpoint_path,
+            config=config,
+            epoch=epoch,
+        )
 
 
 def get_parser():
@@ -464,7 +542,7 @@ def cli():
         config.log_wandb = False
     del config.disable_wandb
 
-    ddp_setup()
+    #ddp_setup()
     run(config)
     destroy_process_group()
 

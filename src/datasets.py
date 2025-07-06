@@ -1,8 +1,11 @@
 import math
 import random
 
+
+import h5py
 import numpy as np
 import pandas as pd
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -93,3 +96,94 @@ class MaskedOneHotDataset(Dataset):
         x_masked[mask] = 1.0 / 5.0
 
         return x_masked, targets, att_mask, mask
+
+import math
+import random
+import numpy as np
+import h5py
+import torch
+import torch.nn.functional as F
+from torch.utils.data import Dataset
+
+class HDF5MaskedDataset(Dataset):
+    def __init__(
+        self,
+        h5_path: str,
+        mask_ratio: float = 0.5,
+        token_size: int = 4,
+        randomize_offset: bool = True,
+        pad_value: int = 255,
+    ):
+        """
+        h5_path: HDF5 file with dataset "barcodes" shape (N, L), uint8
+                 0–3=A/C/G/T, 4=real N, pad_value=padding
+        mask_ratio: fraction of real {A,C,G,T} tokens to mask
+        token_size: length of each contiguous masked span (and max offset)
+        randomize_offset: whether to randomly shift sequence by up to token_size
+        pad_value: integer sentinel in the HDF5 for padding
+        """
+        self.h5_path = h5_path
+        self.mask_ratio = mask_ratio
+        self.chunk_size = token_size
+        self.randomize_offset = randomize_offset
+        self.pad_value = pad_value
+        self._file = None
+
+    def _ensure_open(self):
+        if self._file is None:
+            self._file = h5py.File(self.h5_path, "r")
+            self.data = self._file["barcodes"]
+
+    def __len__(self):
+        with h5py.File(self.h5_path, "r") as f:
+            return f["barcodes"].shape[0]
+
+    def __getitem__(self, idx):
+        # lazy-open HDF5
+        self._ensure_open()
+
+        # 1) Raw row and optional offset
+        row = np.array(self.data[idx])  # shape (L,), uint8
+        L = row.shape[0]
+        if self.randomize_offset:
+            offset = random.randint(0, self.chunk_size - 1)
+        else:
+            offset = 0
+        if offset > 0:
+            pad = np.full(offset, self.pad_value, dtype=row.dtype)
+            row = np.concatenate([row[offset:], pad], axis=0)
+
+        # 2) One-hot encode, then zero-out padding rows
+        idxs = torch.from_numpy(row).long()
+        clamped = idxs.clamp(max=4)
+        x = F.one_hot(clamped, num_classes=5).float()  # (L,5)
+        pad_mask = (idxs == self.pad_value)
+        x[pad_mask] = 0.0
+
+        # 3) Build att_mask & targets
+        att_mask = (~pad_mask).int()  # 1 for real tokens, 0 for padding
+        targets = idxs.clone()
+        targets[pad_mask] = -1        # padding → -1
+
+        # 4) Masking spans on A/C/G/T only
+        valid = (targets >= 0) & (targets < 4)
+        n_valid = int(valid.sum().item())
+        n_chunks = math.ceil(self.mask_ratio * n_valid / self.chunk_size)
+
+        starts = []
+        while len(starts) < n_chunks:
+            s = random.randrange(0, L - self.chunk_size + 1)
+            if valid[s] and all(abs(s - p) >= self.chunk_size for p in starts):
+                starts.append(s)
+
+        mask = torch.zeros(L, dtype=torch.bool)
+        for s in starts:
+            mask[s : s + self.chunk_size] = True
+        mask &= valid
+
+        # 5) Apply uniform fill (1/5) to masked positions
+        x_masked = x.clone()
+        x_masked[mask] = 1.0 / 5.0
+
+        return x_masked, targets, att_mask, mask
+
