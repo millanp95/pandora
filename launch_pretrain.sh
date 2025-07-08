@@ -15,7 +15,6 @@ torchrun  --nnodes="$SLURM_JOB_NUM_NODES" \
           --rdzv_endpoint="$MASTER_ADDR:$MASTER_PORT" \
 	  pretrain.py \
 	   --data_dir=/scratch/ssd004/scratch/pmillana/CANADA_1.5M/data/ \
-	   --checkpoint="model_checkpoints/checkpoint.pt" \
 	   --log-wandb \
 	   --run-name="test_1" \
 	   --run-id="fiesta"

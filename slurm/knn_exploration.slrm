@@ -1,0 +1,48 @@
+#!/bin/bash
+#SBATCH --partition=a40,rtx6000,t4v1,t4v2       # Which node partitions to use. Use a comma-separated list if you don't mind which partition: t4v1,t4v2,rtx6000,a40
+#SBATCH --nodes=1                   # Number of nodes to request. Usually use 1 for interactive jobs.
+#SBATCH --tasks-per-node=1          # Number of processes to spawn per node. Should always be set to 1, regardless of number of GPUs!
+#SBATCH --gres=gpu:1                # Number of GPUs per node to request
+#SBATCH --cpus-per-gpu=10            # Number of CPUs to request per GPU (soft maximum of 4 per GPU requested)
+#SBATCH --mem-per-gpu=10G           # RAM per GPU
+#SBATCH --time=3:00:00             # You must specify a maximum run-time if you want to run for more than 2h
+#SBATCH --output=jnb_%j.out         # You'll need to inspect this log file to find out how to connect to the notebook
+#SBATCH --job-name=jnb
+
+
+# Manually define the project name.
+# This should also be the name of your conda environment used for this project.
+PROJECT_NAME="hyenadna"
+
+# Exit if any command hits an error
+set -e
+
+# Store the time at which the script was launched
+start_time="$SECONDS"
+
+echo "Job $SLURM_JOB_NAME ($SLURM_JOB_ID) begins on $(hostname), submitted from $SLURM_SUBMIT_HOST ($SLURM_CLUSTER_NAME)"
+
+# Print slurm config report
+echo "Running slurm/utils/report_slurm_config.sh"
+source "slurm/utils/report_slurm_config.sh"
+
+echo ""
+echo "-------- Activating environment ----------------------------------------"
+date
+echo ""
+echo "Running ~/.bashrc"
+source ~/.bashrc
+
+# Activate virtual environment
+ENVNAME="$PROJECT_NAME"
+echo "Activating environment $ENVNAME"
+conda activate "$ENVNAME"
+echo ""
+
+#python kNN_exploration.py "${@}"
+#python kNN_exploration.py --aggregation=all --encoder=DNABERT-2 --mask_ratio=0.0
+#python kNN_exploration.py --aggregation=all --encoder=DNABERT-S --mask_ratio=0.0
+#python kNN_exploration.py --aggregation=all --encoder=BarcodeBERT --mask_ratio=0.0
+#python kNN_exploration.py --aggregation=valid --encoder=DNABERT-2 --mask_ratio=0.0
+#python kNN_exploration.py --aggregation=valid --encoder=DNABERT-S --mask_ratio=0.0
+python kNN_exploration.py --aggregation=valid --encoder=BarcodeBERT --mask_ratio=0.05

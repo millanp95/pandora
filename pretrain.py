@@ -45,39 +45,21 @@ def ddp_setup():
 
 
 def run(config):
-    """
-    Training loop that:
-      - takes full-length logits from model(x_masked, att_mask)
-      - splits masked vs. seen losses (weighted by weight_mask)
-      - logs per-100-step losses
-      - uses OneCycleLR
-    Assumes:
-      MaskedOneHotDataset returns (x_masked, targets, att_mask, mask)
-      with x_masked: (B, L, 5),
-           targets:  (B, L) in {-1,0,1,2,3,4},
-           att_mask: (B, L),
-           mask:     (B, L) Boolean for masked A/C/G/T only.
-      model(x_masked, att_mask) -> logits (B, L, 4).
-    """
-
-    if config.log_wandb:
-        # Lazy import of wandb, since logging to wandb is optional
-        import wandb
-
-    # DISTRIBUTION ============================================================
-    # Setup for distributed training
+   
+    # DDP setup =====================================
     setup_slurm_distributed()
-    config.world_size = int(os.environ.get("WORLD_SIZE", 1))
-    config.distributed = check_is_distributed()
-
+    config.world_size   = int(os.environ.get("WORLD_SIZE", 1))
+    config.distributed  = check_is_distributed()
+    
     if config.world_size > 1 and not config.distributed:
         raise EnvironmentError(
             f"WORLD_SIZE is {config.world_size}, but not all other required"
             " environment variables for distributed training are set."
-        )
+        )    
     # Work out the total batch size depending on the number of GPUs we are using
     config.batch_size = config.batch_size_per_gpu * config.world_size
 
+    # Device =====================================
     if config.distributed:
         # For multiprocessing distributed training, gpu rank needs to be
         # set to the global rank among all the processes.
@@ -121,34 +103,54 @@ def run(config):
 
     print(f"Using device {device}", flush=True)
 
-    weight_mask = 0.5
+    # W&B init (master only) =====================================
+    run_name = (f"{config.run_name}__{config.run_id}" if config.run_name and config.run_id
+            else None
+        )
+    
+    if config.log_wandb and config.global_rank == 0:
+        # Lazy import of wandb, since logging to wandb is optional
+        import wandb
+   
+        wandb.init(
+            name=run_name,
+            id=config.run_id,
+            resume="allow",
+            group=config.run_id,
+            entity=config.wandb_entity,
+            project=config.wandb_project,
+            config=vars(config),
+            job_type="pretrain",
+        )
+        wandb.config.update({"checkpoint_path": config.checkpoint_path}, allow_val_change=True)
 
-    #df = pd.read_csv(os.path.join(config.data_dir, "pre_training.csv"))
-    #X, _ = data_from_df(df)
-
-    #dataset = MaskedOneHotDataset(X, mask_ratio=config.mask_ratio, chunk_size=4)
-    #loader = DataLoader(
-    #    dataset,
-    #    batch_size=config.batch_size_per_gpu,
-    #   shuffle=False,
-    #    num_workers=4,
-    #    sampler=DistributedSampler(dataset),
-    #)
-
-    file_name = os.path.join(config.data_dir, "unseen.h5")
-    print(f"Pretrain File: {file_name}")
-    dataset = HDF5MaskedDataset(file_name, mask_ratio=0.5, token_size=4)
-    sampler = DistributedSampler(dataset, shuffle=True)
+    # DataLoader with DistributedSampler =====================================
+    h5_file = os.path.join(config.data_dir, "pre_training.h5")
+    dataset = HDF5MaskedDataset(
+        h5_file,
+        mask_ratio=config.mask_ratio,
+        token_size=config.chunk_size,
+        randomize_offset=not config.no_offset,
+    )
+    sampler = DistributedSampler(dataset, shuffle=True) if config.distributed else None
     loader = DataLoader(
         dataset,
-        batch_size=config.batch_size_per_gpu * config.world_size,
-        num_workers=2,
+        batch_size=config.batch_size,
+        sampler=sampler,
+        num_workers=config.cpu_workers or get_num_cpu_available(),
         pin_memory=True,
         prefetch_factor=2,
-        sampler = sampler,
-        drop_last = True
+        drop_last=True,
     )
 
+    # Model, optimizer, scheduler, loss =====================================
+    # if there is no checkpoint provided, the checkpoint is fully determined by 
+    # the run name 
+
+    if not config.checkpoint_path:
+        config.checkpoint_path = f"model_checkpoints/{run_name}_checkpoint.pt"
+    
+    
     if os.path.exists(config.checkpoint_path):
         print(f"Loading training snapshot from {config.checkpoint_path}")
         model, ckpt = load_pretrained_model(config.checkpoint_path)
@@ -156,11 +158,16 @@ def run(config):
     else:
         model = CNN_MLM(max_len=config.max_len)
         current_epoch = 1
-
-    model.to(device)
-    model = DDP(model, device_ids=[device])
-
-    optimizer = optim.AdamW(model.parameters(), lr=config.lr_relative)
+    
+    
+    model = CNN_MLM(max_len=config.max_len).to(device)
+    if config.distributed:
+        model = DDP(model, device_ids=[config.local_rank])
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=config.lr_relative,
+        weight_decay=config.weight_decay,
+    )
     scheduler = OneCycleLR(
         optimizer,
         max_lr=config.lr_relative,
@@ -171,95 +178,135 @@ def run(config):
     )
     criterion = nn.CrossEntropyLoss()
 
+    # Training loop =====================================
     for epoch in range(current_epoch, config.epochs + 1):
-        total_loss_masked = total_acc_masked = count_masked = 0
-        total_loss_seen = total_acc_seen = count_seen = 0
-        loader.sampler.set_epoch(epoch)
+        if sampler:
+            sampler.set_epoch(epoch)
+
+        # accumulators
+        sum_lm = sum_ls = sum_am = sum_as = 0.0
+
         for step, (x_masked, targets, att_mask, mask) in enumerate(loader, start=1):
-            # --- Move to GPU ---
-            x_masked = x_masked.to(device)  # (B, L, 5)
-            targets = targets.to(device)  # (B, L)
-            att_mask = att_mask.to(device)  # (B, L)
-            mask = mask.to(device)  # (B, L)
+            x_masked = x_masked.to(device)
+            targets  = targets.to(device)
+            mask      = mask.to(device)
+            att_mask  = att_mask.to(device)
 
-            # --- Forward ---
-            logits = model(x_masked, att_mask)  # (B, L, 4)
-            #print(logits.shape)
+            logits = model(x_masked, att_mask)      # (B, L, 4)
+            preds  = logits.argmax(dim=-1)          # (B, L)
 
-            preds = logits.argmax(dim=-1)  # (B, L)
-
-            # --- Build masks for loss ---
-            valid_pos = (targets >= 0) & (targets < 4)
+            valid_pos  = (targets >= 0) & (targets < 4)
             masked_pos = mask & valid_pos
-            seen_pos = (~mask) & valid_pos
+            seen_pos   = (~mask) & valid_pos
 
-            # --- Compute losses ---
-            loss_masked = (
+            lm = (
                 criterion(logits[masked_pos], targets[masked_pos])
                 if masked_pos.any()
                 else torch.tensor(0.0, device=device)
             )
-            loss_seen = (
+            ls = (
                 criterion(logits[seen_pos], targets[seen_pos])
                 if seen_pos.any()
                 else torch.tensor(0.0, device=device)
             )
-            loss = weight_mask * loss_masked + loss_seen
-            print(loss)
+            loss = config.weight_mask * lm + (1 - config.weight_mask) * ls
 
-            # --- Backprop & step ---
+            # average across GPUs
+            if config.distributed:
+                dist.reduce(lm,  0, op=dist.ReduceOp.AVG)
+                dist.reduce(ls,  0, op=dist.ReduceOp.AVG)
+                dist.reduce(loss,0, op=dist.ReduceOp.AVG)
+
+            lm_val = lm.item()
+            ls_val = ls.item()
+
+            acc_m = (
+                (preds[masked_pos] == targets[masked_pos]).float().mean()
+                if masked_pos.any()
+                else torch.tensor(0.0, device=device)
+            )
+            acc_s = (
+                (preds[seen_pos] == targets[seen_pos]).float().mean()
+                if seen_pos.any()
+                else torch.tensor(0.0, device=device)
+            )
+            acc_o = (
+                (preds[valid_pos] == targets[valid_pos]).float().mean()
+                if valid_pos.any()
+                else torch.tensor(0.0, device=device)
+            )
+
+            if config.distributed:
+                dist.reduce(acc_m, 0, op=dist.ReduceOp.AVG)
+                dist.reduce(acc_s, 0, op=dist.ReduceOp.AVG)
+                dist.reduce(acc_o, 0, op=dist.ReduceOp.AVG)
+
+            acc_m_val = 100 * acc_m.item()
+            acc_s_val = 100 * acc_s.item()
+            acc_o_val = 100 * acc_o.item()
+
+            # debug print first batch
+            if epoch == 1 and step == 1 and config.global_rank == 0:
+                print("=== DEBUG BATCH ===")
+                print("x_masked.shape:", x_masked.shape)
+                print("att_mask.shape:", att_mask.shape)
+                print("targets.shape:", targets.shape)
+                print("mask.shape:   ", mask.shape)
+                print("logits.shape: ", logits.shape)
+                print("preds[0]:     ", preds[0])
+                print("targets[0]:   ", targets[0])
+                print("mask[0]:      ", mask[0])
+                print("===================")
+
             optimizer.zero_grad()
             loss.backward()
-            # clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             scheduler.step()
 
-            # --- Accumulate metrics ---
-            if masked_pos.any():
-                total_acc_masked += (
-                    (preds[masked_pos] == targets[masked_pos]).sum().item()
-                )
-                total_loss_masked += loss_masked.item() * masked_pos.sum().item()
-                count_masked += masked_pos.sum().item()
+            # accumulate epoch stats
+            sum_lm += lm_val
+            sum_ls += ls_val
+            sum_am += acc_m_val
+            sum_as += acc_s_val
 
-            if seen_pos.any():
-                total_acc_seen += (preds[seen_pos] == targets[seen_pos]).sum().item()
-                total_loss_seen += loss_seen.item() * seen_pos.sum().item()
-                count_seen += seen_pos.sum().item()
-
-            # --- Log every 100 steps ---
-            if step % 100 == 0:
+            # print & wandb.log
+            if config.global_rank == 0 and step % config.print_interval == 0:
                 print(
                     f"Epoch {epoch} Step {step}/{len(loader)} | "
-                    f"Loss_masked: {loss_masked.item():.4f} | "
-                    f"Loss_seen: {loss_seen.item():.4f} | "
-                    f"Total: {loss.item():.4f}"
+                    f"Lm={lm_val:.4f} Ls={ls_val:.4f} Tot={loss.item():.4f} | "
+                    f"Am={acc_m_val:.2f}% As={acc_s_val:.2f}%"
                 )
+            if config.log_wandb and config.global_rank == 0 and step % config.log_interval == 0:
+                wandb.log({
+                    "train/loss_masked": lm_val,
+                    "train/loss_seen":   ls_val,
+                    "train/loss":        loss.item(),
+                    "train/acc_masked":  acc_m_val,
+                    "train/acc_seen":    acc_s_val,
+                    "train/acc_overall": acc_o_val,
+                    "train/epoch":       epoch,
+                    "train/step":        step,
+                    "train/epoch_progress": epoch - 1 + step / len(loader),
+                })
 
-        # --- Epoch summary ---
-        avg_loss_masked = total_loss_masked / count_masked if count_masked else 0.0
-        avg_acc_masked = (
-            100.0 * total_acc_masked / count_masked if count_masked else 0.0
-        )
-        avg_loss_seen = total_loss_seen / count_seen if count_seen else 0.0
-        avg_acc_seen = 100.0 * total_acc_seen / count_seen if count_seen else 0.0
-
-        print(
-            f"Epoch {epoch}/{config.epochs} DONE ➞ "
-            f"Masked Loss: {avg_loss_masked:.4f}, Acc: {avg_acc_masked:.2f}% | "
-            f"Seen Loss: {avg_loss_seen:.4f}, Acc: {avg_acc_seen:.2f}%"
-        )
-        if config.global_rank == 0: 
+        # end of epoch summary & save (master only)
+        if config.global_rank == 0:
+            avg_lm = sum_lm / len(loader)
+            avg_ls = sum_ls / len(loader)
+            avg_am = sum_am / len(loader)
+            avg_as = sum_as / len(loader)
+            print(
+                f">>> Epoch {epoch} DONE | "
+                f"MeanLm={avg_lm:.4f} MeanLs={avg_ls:.4f} | "
+                f"MeanAm={avg_am:.2f}% MeanAs={avg_as:.2f}%"
+            )
             safe_save_model(
-            {
-                "model": model,
-                "optimizer": optimizer,
-                "scheduler": scheduler,
-            },
-            config.checkpoint_path,
-            config=config,
-            epoch=epoch,
-        )
+                {"model": model, "optimizer": optimizer, "scheduler": scheduler},
+                config.checkpoint_path,
+                config=config,
+                epoch=epoch,
+            )
+
 
 
 def get_parser():
@@ -344,6 +391,7 @@ def get_parser():
         help="Number of attention heads in the transformer. Default: %(default)s",
     )
     # MLM args -------------------------------------------------------
+    group = parser.add_argument_group("MLM parameters")
     group.add_argument(
         "--mask-ratio",
         "--masking-ratio",
@@ -366,9 +414,16 @@ def get_parser():
         action="store_true",
         help="Do not use offset for the augmentations",
     )
-
+    group.add_argument(
+        "--weight-mask",
+        "--weight_mask",
+        type=float,
+        default=0.95,
+        help="Loss penalty term for the masking tokens",
+    )
     # Optimization args -------------------------------------------------------
     group = parser.add_argument_group("Optimization routine")
+
     group.add_argument(
         "--epochs",
         type=int,
@@ -489,7 +544,7 @@ def get_parser():
     group.add_argument(
         "--print-interval",
         type=int,
-        default=None,
+        default=100,
         help="Number of batches between each print to STDOUT. Default: same as LOG_INTERVAL.",
     )
     group.add_argument(
