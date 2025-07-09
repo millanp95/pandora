@@ -160,7 +160,8 @@ def run(config):
         current_epoch = 1
     
     
-    model = CNN_MLM(max_len=config.max_len).to(device)
+    #model = CNN_MLM(max_len=config.max_len).to(device)
+    model = model.to(device)    
     if config.distributed:
         model = DDP(model, device_ids=[config.local_rank])
     optimizer = optim.AdamW(
@@ -177,6 +178,10 @@ def run(config):
         anneal_strategy="linear",
     )
     criterion = nn.CrossEntropyLoss()
+
+    if os.path.exists(config.checkpoint_path):
+        optimizer.load_state_dict(ckpt["optimizer"])
+        scheduler.load_state_dict(ckpt["scheduler"])
 
     # Training loop =====================================
     for epoch in range(current_epoch, config.epochs + 1):

@@ -96,9 +96,15 @@ fi
 JOB_ID="Vec$JOB_ID"
 # Decide the name of the paths to use for saving this job
 JOB_LABEL="${SLURM_JOB_NAME}__${JOB_ID}";
+
+JOB_ID="Vec17164194"
+JOB_LABEL="CNN_MLM__Vec17164194"
+
 echo "JOB_ID = $JOB_ID"
 echo "JOB_LABEL = $JOB_LABEL"
 echo ""
+
+
 
 if [[ "$SLURM_RESTART_COUNT" > 0 && ! -f "$CKPT_PTH" ]];
 then
