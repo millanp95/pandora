@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import argparse
 import sys
 
@@ -10,14 +12,12 @@ import wandb
 from sklearn.neighbors import KNeighborsClassifier
 from tqdm import tqdm
 
-
-from src.models import CNN_MLM
 from src.datasets import data_from_df
-
+from src.models import CNN_MLM
 from src.utils import load_pretrained_model
 
 
-def run(config):
+def run_knn(config):
 
     data_folder = config.data_dir
     train = pd.read_csv(f"{data_folder}/supervised_train.csv")
@@ -43,16 +43,16 @@ def run(config):
 
     print(f"Getting the model from: {model_path}")
 
-    #try:
+    # try:
     print(f"Loading training snapshot from {config.model_checkpoint}")
     model, ckpt = load_pretrained_model(config.model_checkpoint, device=device)
     print(f"Model at epoch {ckpt['epoch']} was succesfully loaded")
     model.to(device)
     model.eval()
-    #except Exception:
+    # except Exception:
     #    print("There was a problem loading the model")
     #    return
-    
+
     # REGISTER FORWARD HOOK TO GET INTERMEDIATE REPRESENTATIONS ===
 
     hidden = {}
@@ -60,10 +60,11 @@ def run(config):
     def get_activation(name):
         def hook(model, input, output):
             hidden[name] = output.detach()
+
         return hook
 
     # Register hook on the ReLU layer
-    model.transformer.register_forward_hook(get_activation('final_features'))
+    model.transformer.register_forward_hook(get_activation("final_features"))
 
     # USE MODEL AS FEATURE EXTRACTOR ===================================
     dna_embeddings = []
@@ -74,14 +75,18 @@ def run(config):
             # 1) Padding mask: 1 for real tokens (sum>0), 0 for padding (zero-vector)
             att_mask = (x.sum(dim=-1) > 0).int().to(device)
             out = model(x.unsqueeze(0), att_mask.unsqueeze(0))
-            z = hidden['final_features'].squeeze(1)
-            z = z.mean(dim=0, dtype=float)
-            #print(z.shape)
-            #z = z * att_mask.squeeze(0)
-            #z = z.sum(dim=1) / att_mask.sum()
-            
-            #print(z.shape)
-            
+            # z = hidden['final_features'].squeeze(0) * att_mask.squeeze(0)
+            # z = z.sum(dim=1) / att_mask.sum()
+            # print(z.shape)
+            # print(att_mask.shape)
+            # att_mask = att_mask.transpose(0,1)
+            # print(att_mask.shape)
+            z = hidden["final_features"]
+            # print(z.squeeze(1).shape)
+            z = z.squeeze(1).t() * att_mask[::4]
+            z = z.sum(dim=1) / att_mask.sum()
+            # z = z.mean(dim=0, dtype=float)
+
             dna_embeddings.extend(z.cpu().numpy())
 
     X_test = np.array(dna_embeddings).reshape(-1, 768)
@@ -94,16 +99,21 @@ def run(config):
             x = torch.Tensor(X[i]).to(device)
             # 1) Padding mask: 1 for real tokens (sum>0), 0 for padding (zero-vector)
             att_mask = (x.sum(dim=-1) > 0).int().to(device)
-            out = model(x.unsqueeze(0), att_mask.unsqueeze(0))           
-            #z = hidden['final_features'].squeeze(0) * att_mask.squeeze(0)
-            #z = z.sum(dim=1) / att_mask.sum()
-            #print(z.shape)
-            z = hidden['final_features'].squeeze(1)
-            z = z.mean(dim=0, dtype=float)
+            out = model(x.unsqueeze(0), att_mask.unsqueeze(0))
+            # z = hidden['final_features'].squeeze(0) * att_mask.squeeze(0)
+            # z = z.sum(dim=1) / att_mask.sum()
+            # print(z.shape)
+            # print(att_mask.shape)
+            # att_mask = att_mask.transpose(0,1)
+            # print(att_mask.shape)
+            z = hidden["final_features"].squeeze(1).t() * att_mask[::4]
+            # print(z.shape)
+            z = z.sum(dim=1) / att_mask.sum()
+            # z = z.mean(dim=0, dtype=float)
             train_embeddings.extend(z.cpu().numpy())
 
-    #X_test = np.array(dna_embeddings).reshape(-1, 660)
-    #print(X_test.shape)
+    # X_test = np.array(dna_embeddings).reshape(-1, 660)
+    # print(X_test.shape)
 
     X = np.array(train_embeddings).reshape(-1, 768)
     print(X.shape)
@@ -118,10 +128,18 @@ def run(config):
     results["count"] = len(y_test)
     # Note that these evaluation metrics have all been converted to percentages
     results["accuracy"] = 100.0 * sklearn.metrics.accuracy_score(y_test, y_pred)
-    results["accuracy-balanced"] = 100.0 * sklearn.metrics.balanced_accuracy_score(y_test, y_pred)
-    results["f1-micro"] = 100.0 * sklearn.metrics.f1_score(y_test, y_pred, average="micro")
-    results["f1-macro"] = 100.0 * sklearn.metrics.f1_score(y_test, y_pred, average="macro")
-    results["f1-support"] = 100.0 * sklearn.metrics.f1_score(y_test, y_pred, average="weighted")
+    results["accuracy-balanced"] = 100.0 * sklearn.metrics.balanced_accuracy_score(
+        y_test, y_pred
+    )
+    results["f1-micro"] = 100.0 * sklearn.metrics.f1_score(
+        y_test, y_pred, average="micro"
+    )
+    results["f1-macro"] = 100.0 * sklearn.metrics.f1_score(
+        y_test, y_pred, average="macro"
+    )
+    results["f1-support"] = 100.0 * sklearn.metrics.f1_score(
+        y_test, y_pred, average="weighted"
+    )
 
     wandb.log({f"eval/{k}": v for k, v in results.items()})
 
@@ -162,4 +180,4 @@ if __name__ == "__main__":
     config = parser.parse_args()
     wandb.init(project="CNN_MLM", name="knn_CNN_CANADA-1.5M", config=vars(config))
     wandb.config.update(vars(config))  # log your CLI args
-    run(config)
+    run_knn(config)

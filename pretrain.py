@@ -13,22 +13,20 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.optim
+from omegaconf import OmegaConf
 from torch import nn
 from torch.distributed import destroy_process_group, init_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 
-from src.datasets import MaskedOneHotDataset, data_from_df, HDF5MaskedDataset
+from knn_probe import run_knn
+from src.datasets import HDF5MaskedDataset, MaskedOneHotDataset, data_from_df
 from src.models import CNN_MLM
-from src.utils import (
-    load_pretrained_model,
-    safe_save_model,
-    setup_slurm_distributed,
-    check_is_distributed,
-    get_num_cpu_available,
-)
+from src.utils import (check_is_distributed, get_num_cpu_available,
+                       load_pretrained_model, safe_save_model,
+                       setup_slurm_distributed)
 
-BASE_BATCH_SIZE = 128
+BASE_BATCH_SIZE = 64
 
 
 import torch
@@ -45,17 +43,17 @@ def ddp_setup():
 
 
 def run(config):
-   
+
     # DDP setup =====================================
     setup_slurm_distributed()
-    config.world_size   = int(os.environ.get("WORLD_SIZE", 1))
-    config.distributed  = check_is_distributed()
-    
+    config.world_size = int(os.environ.get("WORLD_SIZE", 1))
+    config.distributed = check_is_distributed()
+
     if config.world_size > 1 and not config.distributed:
         raise EnvironmentError(
             f"WORLD_SIZE is {config.world_size}, but not all other required"
             " environment variables for distributed training are set."
-        )    
+        )
     # Work out the total batch size depending on the number of GPUs we are using
     config.batch_size = config.batch_size_per_gpu * config.world_size
 
@@ -104,14 +102,16 @@ def run(config):
     print(f"Using device {device}", flush=True)
 
     # W&B init (master only) =====================================
-    run_name = (f"{config.run_name}__{config.run_id}" if config.run_name and config.run_id
-            else None
-        )
-    
+    run_name = (
+        f"{config.run_name}__{config.run_id}"
+        if config.run_name and config.run_id
+        else None
+    )
+
     if config.log_wandb and config.global_rank == 0:
         # Lazy import of wandb, since logging to wandb is optional
         import wandb
-   
+
         wandb.init(
             name=run_name,
             id=config.run_id,
@@ -122,7 +122,9 @@ def run(config):
             config=vars(config),
             job_type="pretrain",
         )
-        wandb.config.update({"checkpoint_path": config.checkpoint_path}, allow_val_change=True)
+        wandb.config.update(
+            {"checkpoint_path": config.checkpoint_path}, allow_val_change=True
+        )
 
     # DataLoader with DistributedSampler =====================================
     h5_file = os.path.join(config.data_dir, "pre_training.h5")
@@ -144,13 +146,12 @@ def run(config):
     )
 
     # Model, optimizer, scheduler, loss =====================================
-    # if there is no checkpoint provided, the checkpoint is fully determined by 
-    # the run name 
+    # if there is no checkpoint provided, the checkpoint is fully determined by
+    # the run name
 
     if not config.checkpoint_path:
         config.checkpoint_path = f"model_checkpoints/{run_name}_checkpoint.pt"
-    
-    
+
     if os.path.exists(config.checkpoint_path):
         print(f"Loading training snapshot from {config.checkpoint_path}")
         model, ckpt = load_pretrained_model(config.checkpoint_path)
@@ -158,25 +159,32 @@ def run(config):
     else:
         model = CNN_MLM(max_len=config.max_len)
         current_epoch = 1
-    
-    
-    #model = CNN_MLM(max_len=config.max_len).to(device)
-    model = model.to(device)    
+
+    # model = CNN_MLM(max_len=config.max_len).to(device)
+    model = model.to(device)
     if config.distributed:
         model = DDP(model, device_ids=[config.local_rank])
+
+    # Bigger batch sizes mean better estimates of the gradient, so we can use a
+    # bigger learning rate. See https://arxiv.org/abs/1706.02677
+    # Hence we scale the learning rate linearly with the total batch size.
+    config.lr = config.lr_relative * config.batch_size / BASE_BATCH_SIZE
+
     optimizer = optim.AdamW(
         model.parameters(),
         lr=config.lr_relative,
         weight_decay=config.weight_decay,
     )
+
+    # Scheduler ---------------------------------------------------------------
+    # Set up the learning rate scheduler
     scheduler = OneCycleLR(
         optimizer,
-        max_lr=config.lr_relative,
+        [p["lr"] for p in optimizer.param_groups],
         epochs=config.epochs,
         steps_per_epoch=len(loader),
-        pct_start=0.3,
-        anneal_strategy="linear",
     )
+
     criterion = nn.CrossEntropyLoss()
 
     if os.path.exists(config.checkpoint_path):
@@ -184,6 +192,17 @@ def run(config):
         scheduler.load_state_dict(ckpt["scheduler"])
 
     # Training loop =====================================
+
+    # KNN parameters
+    knn_config = OmegaConf.create(
+        {
+            "data_dir": config.data_dir,
+            "model_checkpoint": config.checkpoint_path,
+            "max_len": config.max_len,
+            "target_level": "genus",
+        }
+    )
+
     for epoch in range(current_epoch, config.epochs + 1):
         if sampler:
             sampler.set_epoch(epoch)
@@ -193,16 +212,16 @@ def run(config):
 
         for step, (x_masked, targets, att_mask, mask) in enumerate(loader, start=1):
             x_masked = x_masked.to(device)
-            targets  = targets.to(device)
-            mask      = mask.to(device)
-            att_mask  = att_mask.to(device)
+            targets = targets.to(device)
+            mask = mask.to(device)
+            att_mask = att_mask.to(device)
 
-            logits = model(x_masked, att_mask)      # (B, L, 4)
-            preds  = logits.argmax(dim=-1)          # (B, L)
+            logits = model(x_masked, att_mask)  # (B, L, 4)
+            preds = logits.argmax(dim=-1)  # (B, L)
 
-            valid_pos  = (targets >= 0) & (targets < 4)
+            valid_pos = (targets >= 0) & (targets < 4)
             masked_pos = mask & valid_pos
-            seen_pos   = (~mask) & valid_pos
+            seen_pos = (~mask) & valid_pos
 
             lm = (
                 criterion(logits[masked_pos], targets[masked_pos])
@@ -218,9 +237,9 @@ def run(config):
 
             # average across GPUs
             if config.distributed:
-                dist.reduce(lm,  0, op=dist.ReduceOp.AVG)
-                dist.reduce(ls,  0, op=dist.ReduceOp.AVG)
-                dist.reduce(loss,0, op=dist.ReduceOp.AVG)
+                dist.reduce(lm, 0, op=dist.ReduceOp.AVG)
+                dist.reduce(ls, 0, op=dist.ReduceOp.AVG)
+                dist.reduce(loss, 0, op=dist.ReduceOp.AVG)
 
             lm_val = lm.item()
             ls_val = ls.item()
@@ -281,18 +300,24 @@ def run(config):
                     f"Lm={lm_val:.4f} Ls={ls_val:.4f} Tot={loss.item():.4f} | "
                     f"Am={acc_m_val:.2f}% As={acc_s_val:.2f}%"
                 )
-            if config.log_wandb and config.global_rank == 0 and step % config.log_interval == 0:
-                wandb.log({
-                    "train/loss_masked": lm_val,
-                    "train/loss_seen":   ls_val,
-                    "train/loss":        loss.item(),
-                    "train/acc_masked":  acc_m_val,
-                    "train/acc_seen":    acc_s_val,
-                    "train/acc_overall": acc_o_val,
-                    "train/epoch":       epoch,
-                    "train/step":        step,
-                    "train/epoch_progress": epoch - 1 + step / len(loader),
-                })
+            if (
+                config.log_wandb
+                and config.global_rank == 0
+                and step % config.log_interval == 0
+            ):
+                wandb.log(
+                    {
+                        "train/loss_masked": lm_val,
+                        "train/loss_seen": ls_val,
+                        "train/loss": loss.item(),
+                        "train/acc_masked": acc_m_val,
+                        "train/acc_seen": acc_s_val,
+                        "train/acc_overall": acc_o_val,
+                        "train/epoch": epoch,
+                        "train/step": step,
+                        "train/epoch_progress": epoch - 1 + step / len(loader),
+                    }
+                )
 
         # end of epoch summary & save (master only)
         if config.global_rank == 0:
@@ -312,6 +337,9 @@ def run(config):
                 epoch=epoch,
             )
 
+            # Run the kNN pipeline:
+            if epoch % 5 == 1:
+                run_knn(knn_config)
 
 
 def get_parser():
@@ -404,7 +432,7 @@ def get_parser():
         "--mask_ratio",
         dest="mask_ratio",
         type=float,
-        default=0.5,
+        default=0.6,
         help="Proportion of tokens to be masked in the MLM. Default: %(default)s",
     )
     group.add_argument(
@@ -423,7 +451,7 @@ def get_parser():
         "--weight-mask",
         "--weight_mask",
         type=float,
-        default=0.95,
+        default=0.98,
         help="Loss penalty term for the masking tokens",
     )
     # Optimization args -------------------------------------------------------
@@ -511,7 +539,7 @@ def get_parser():
         "--batch_size",
         dest="batch_size_per_gpu",
         type=int,
-        default=16,
+        default=32,
         help=(
             "Batch size per GPU. The total batch size will be this value times"
             " the total number of GPUs used. Default: %(default)s"
@@ -602,7 +630,7 @@ def cli():
         config.log_wandb = False
     del config.disable_wandb
 
-    #ddp_setup()
+    # ddp_setup()
     run(config)
     destroy_process_group()
 
