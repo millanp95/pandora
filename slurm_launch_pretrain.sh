@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --partition=t4v1,t4v2       # Which node partitions to use. Use a comma-separated list if you don't mind which partition: t4v1,t4v2,rtx6000,a40
+#SBATCH --partition=a40    # Which node partitions to use. Use a comma-separated list if you don't mind which partition: t4v1,t4v2,rtx6000,a40
 #SBATCH --nodes=1                   # Number of nodes to request. Can increase to --nodes=2, etc, for more GPUs (spread out over different nodes).
 #SBATCH --tasks-per-node=1          # Number of processes to spawn per node. Should always be set to 1, regardless of number of GPUs!
 #SBATCH --gres=gpu:4                # Number of GPUs per node. Can increase to --gres=gpu:2, etc, for more GPUs (together on the same node).
@@ -213,6 +213,7 @@ srun -N "$SLURM_NNODES" --ntasks-per-node=1 \
 	  --log-wandb \
 	  --run-name="$SLURM_JOB_NAME" \
 	  --run-id="pretrain_$JOB_ID"
+	 "${@}" &
 
 child="$!"
 wait "$child"
