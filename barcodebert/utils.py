@@ -31,7 +31,9 @@ def ddp_setup(rank: int, world_size: int):
 
 
 def prepare(dataset, rank, world_size, batch_size=32, pin_memory=False, num_workers=0):
-    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=False, drop_last=False)
+    sampler = DistributedSampler(
+        dataset, num_replicas=world_size, rank=rank, shuffle=False, drop_last=False
+    )
 
     dataloader = DataLoader(
         dataset,
@@ -75,7 +77,9 @@ def setup_slurm_distributed():
     if "WORLD_SIZE" in os.environ:
         pass
     elif "SLURM_NNODES" in os.environ and "SLURM_GPUS_ON_NODE" in os.environ:
-        os.environ["WORLD_SIZE"] = str(int(os.environ["SLURM_NNODES"]) * int(os.environ["SLURM_GPUS_ON_NODE"]))
+        os.environ["WORLD_SIZE"] = str(
+            int(os.environ["SLURM_NNODES"]) * int(os.environ["SLURM_GPUS_ON_NODE"])
+        )
     elif "SLURM_NPROCS" in os.environ:
         os.environ["WORLD_SIZE"] = os.environ["SLURM_NTASKS"]
     if "RANK" not in os.environ and "SLURM_PROCID" in os.environ:

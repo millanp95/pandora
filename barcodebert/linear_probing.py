@@ -28,7 +28,9 @@ def run(config):
     k = config.k_mer
 
     extra = ""
-    representation_folder = os.path.join(get_project_root(), "data", f"{extra}{config.n_layers}_{config.n_layers}")
+    representation_folder = os.path.join(
+        get_project_root(), "data", f"{extra}{config.n_layers}_{config.n_layers}"
+    )
     if not os.path.exists(representation_folder):
         os.makedirs(representation_folder, exist_ok=True)
 
@@ -53,10 +55,14 @@ def run(config):
     )
 
     model = BertForTokenClassification(configuration)
-    state_dict = remove_extra_pre_fix(torch.load(config.Pretrained_checkpoint_path, map_location="cuda:0"))
+    state_dict = remove_extra_pre_fix(
+        torch.load(config.Pretrained_checkpoint_path, map_location="cuda:0")
+    )
     model.load_state_dict(state_dict, strict=False)
 
-    print(f"The model has been succesfully loaded . . . after {time.time()-start} seconds")
+    print(
+        f"The model has been succesfully loaded . . . after {time.time()-start} seconds"
+    )
     model.to(device)
     model.eval()
 
@@ -69,14 +75,20 @@ def run(config):
         print(f"Representations found  after {time.time()-start} seconds . . .")
         with open(train_file, "rb") as f:
             X, y = pickle.load(f)
-            train = pd.read_csv(os.path.join(config.data_path, "supervised_train.csv"), sep=",")
+            train = pd.read_csv(
+                os.path.join(config.data_path, "supervised_train.csv"), sep=","
+            )
 
             targets = train[target_level].to_list()
             label_set = sorted(set(targets))
             y = [label_set.index(t) for t in targets]
     else:
-        train = pd.read_csv(os.path.join(config.data_path, "supervised_train.csv"), sep=",")
-        X, y, train_orders = representations_from_df(train, target_level, model, tokenizer)
+        train = pd.read_csv(
+            os.path.join(config.data_path, "supervised_train.csv"), sep=","
+        )
+        X, y, train_orders = representations_from_df(
+            train, target_level, model, tokenizer
+        )
         file = open(f"{representation_folder}/{fname_base}_train.pkl", "wb")
         pickle.dump((X, y), file)
         file.close()
@@ -85,14 +97,20 @@ def run(config):
         print(f"Representations found  after {time.time()-start} seconds . . .")
         with open(test_file, "rb") as f:
             X_test, y_test = pickle.load(f)
-            test = pd.read_csv(os.path.join(config.data_path, "supervised_test.csv"), sep=",")
+            test = pd.read_csv(
+                os.path.join(config.data_path, "supervised_test.csv"), sep=","
+            )
             targets = test[target_level].to_list()
             label_set = sorted(set(targets))
             y_test = [label_set.index(t) for t in targets]
 
     else:
-        test = pd.read_csv(os.path.join(config.data_path, "supervised_test.csv"), sep=",")
-        X_test, y_test, orders = representations_from_df(test, target_level, model, tokenizer)
+        test = pd.read_csv(
+            os.path.join(config.data_path, "supervised_test.csv"), sep=","
+        )
+        X_test, y_test, orders = representations_from_df(
+            test, target_level, model, tokenizer
+        )
         file = open(f"{representation_folder}/{fname_base}_test.pkl", "wb")
         pickle.dump((X_test, y_test), file)
         file.close()
@@ -123,7 +141,9 @@ def run(config):
 
     # Train the model
     criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(clf.parameters(), lr=0.01, momentum=0.9, weight_decay=1e-5)
+    optimizer = torch.optim.SGD(
+        clf.parameters(), lr=0.01, momentum=0.9, weight_decay=1e-5
+    )
 
     num_epochs = 200
     for epoch in range(num_epochs):
@@ -161,7 +181,9 @@ def run(config):
     hour = _time // 3600
     minutes = (_time - (3600 * hour)) // 60
     seconds = _time - (hour * 3600) - (minutes * 60)
-    print(f"The code finished after: {int(hour)}:{int(minutes)}:{round(seconds)} (hh:mm:ss)\n")
+    print(
+        f"The code finished after: {int(hour)}:{int(minutes)}:{round(seconds)} (hh:mm:ss)\n"
+    )
 
     with open("LINEAR_RESULTS.txt", "a") as f:
         model_name = config.Pretrained_checkpoint_path.split(".")[-2].split("/")[-1]

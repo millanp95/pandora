@@ -96,10 +96,20 @@ class BayesianClassifier:
             }
 
             prob_seen_dna, prob_unseen_dna, class_id = self.classify(
-                **dna_data, genera=genera, pca=pca, tuning=tuning, num_iter=num_iter, get_metrics=False
+                **dna_data,
+                genera=genera,
+                pca=pca,
+                tuning=tuning,
+                num_iter=num_iter,
+                get_metrics=False,
             )
             prob_seen_image, prob_unseen_image, class_id = self.classify(
-                **image_data, genera=genera, pca=pca, tuning=tuning, num_iter=num_iter, get_metrics=False
+                **image_data,
+                genera=genera,
+                pca=pca,
+                tuning=tuning,
+                num_iter=num_iter,
+                get_metrics=False,
             )
 
             # normalized summation of likelihoods
@@ -115,11 +125,19 @@ class BayesianClassifier:
             y_pred_unseen = class_id[unseen_indices]
             y_pred_seen = class_id[seen_indices]
 
-            _, unseen_acc = self.evaluate(y_test_unseen, y_pred_unseen, genera, is_unseen=True)
+            _, unseen_acc = self.evaluate(
+                y_test_unseen, y_pred_unseen, genera, is_unseen=True
+            )
 
-            _, seen_acc = self.evaluate(y_test_seen, y_pred_seen, genera, is_unseen=False)
+            _, seen_acc = self.evaluate(
+                y_test_seen, y_pred_seen, genera, is_unseen=False
+            )
 
-            harmonic_mean = 2 * unseen_acc * seen_acc / (unseen_acc + seen_acc) if unseen_acc + seen_acc > 0 else 0
+            harmonic_mean = (
+                2 * unseen_acc * seen_acc / (unseen_acc + seen_acc)
+                if unseen_acc + seen_acc > 0
+                else 0
+            )
 
             return seen_acc, unseen_acc, harmonic_mean
 
@@ -155,7 +173,9 @@ class BayesianClassifier:
     ):
         embedding_dim = x_train.shape[1]
         if pca is not None:
-            x_train, x_test_seen, x_test_unseen = apply_pca(pca, x_train, x_test_seen, x_test_unseen)
+            x_train, x_test_seen, x_test_unseen = apply_pca(
+                pca, x_train, x_test_seen, x_test_unseen
+            )
             embedding_dim = pca
 
         # the original implementation had an option to permute the embedding features into a different order when not
@@ -179,27 +199,47 @@ class BayesianClassifier:
                 self.mu_0, self.scatter = calculate_priors(x_train_iter, y_train_iter)
             psi = (self.m - embedding_dim - 1) * self.scatter / self.s
 
-            sig_s, mu_s, v_s, class_id, sigmas = self.ppd_derivation(x_train_iter, y_train_iter, genera, psi)
+            sig_s, mu_s, v_s, class_id, sigmas = self.ppd_derivation(
+                x_train_iter, y_train_iter, genera, psi
+            )
 
             # inference
-            y_pred_unseen[:, iter], prob_unseen = self.predict(x_test_unseen_iter, sig_s, mu_s, v_s, class_id)
-            y_pred_seen[:, iter], prob_seen = self.predict(x_test_seen_iter, sig_s, mu_s, v_s, class_id)
+            y_pred_unseen[:, iter], prob_unseen = self.predict(
+                x_test_unseen_iter, sig_s, mu_s, v_s, class_id
+            )
+            y_pred_seen[:, iter], prob_seen = self.predict(
+                x_test_seen_iter, sig_s, mu_s, v_s, class_id
+            )
 
         # performance calculation
         if get_metrics:
             y_pred_unseen_final = mode(y_pred_unseen, axis=1).mode
-            _, unseen_acc = self.evaluate(y_test_unseen, y_pred_unseen_final, genera, is_unseen=True)
+            _, unseen_acc = self.evaluate(
+                y_test_unseen, y_pred_unseen_final, genera, is_unseen=True
+            )
 
             y_pred_seen_final = mode(y_pred_seen, axis=1).mode
-            _, seen_acc = self.evaluate(y_test_seen, y_pred_seen_final, genera, is_unseen=False)
+            _, seen_acc = self.evaluate(
+                y_test_seen, y_pred_seen_final, genera, is_unseen=False
+            )
 
-            harmonic_mean = 2 * unseen_acc * seen_acc / (unseen_acc + seen_acc) if unseen_acc + seen_acc > 0 else 0
+            harmonic_mean = (
+                2 * unseen_acc * seen_acc / (unseen_acc + seen_acc)
+                if unseen_acc + seen_acc > 0
+                else 0
+            )
 
             return seen_acc, unseen_acc, harmonic_mean
         else:
             return prob_seen, prob_unseen, class_id
 
-    def ppd_derivation(self, x_train: np.ndarray, y_train: np.ndarray, genera: np.ndarray, psi: np.ndarray):
+    def ppd_derivation(
+        self,
+        x_train: np.ndarray,
+        y_train: np.ndarray,
+        genera: np.ndarray,
+        psi: np.ndarray,
+    ):
         """
         Calculate the PPD (Posterior Predictive Distribution) for each seen and surrogate classes.
 
@@ -244,15 +284,18 @@ class BayesianClassifier:
             mu_species = np.mean(x_species, axis=0)
 
             v_s[class_index] = num_samples_per_species + self.m - embedding_dim + 1
-            mu_s[class_index, :] = (num_samples_per_species * mu_species + k_inv_sum * self.mu_0) / (
-                num_samples_per_species + k_inv_sum
-            )
+            mu_s[class_index, :] = (
+                num_samples_per_species * mu_species + k_inv_sum * self.mu_0
+            ) / (num_samples_per_species + k_inv_sum)
             # eq 34 - wishart terms
-            s_mu = ((num_samples_per_species * k_inv_sum) / (k_inv_sum + num_samples_per_species)) * np.dot(
-                mu_species - self.mu_0, mu_species - self.mu_0
-            )
+            s_mu = (
+                (num_samples_per_species * k_inv_sum)
+                / (k_inv_sum + num_samples_per_species)
+            ) * np.dot(mu_species - self.mu_0, mu_species - self.mu_0)
             sig_s[:, :, class_index] = (psi + s_species + s_mu) / (
-                (num_samples_per_species + k_inv_sum) * v_s[class_index] / (num_samples_per_species + k_inv_sum + 1)
+                (num_samples_per_species + k_inv_sum)
+                * v_s[class_index]
+                / (num_samples_per_species + k_inv_sum + 1)
             )
             class_id[class_index] = seen_species[species_idx]
             class_index += 1
@@ -273,7 +316,9 @@ class BayesianClassifier:
 
                 # initialize component sufficient statistics
                 x_kl = np.zeros((num_species, embedding_dim))  # component means
-                s_kl = np.zeros((embedding_dim, embedding_dim, num_species))  # component scatter matrices
+                s_kl = np.zeros(
+                    (embedding_dim, embedding_dim, num_species)
+                )  # component scatter matrices
                 kap = np.zeros(num_species)  # model specific
                 nkl = np.zeros(num_species)  # data points in components
 
@@ -291,12 +336,16 @@ class BayesianClassifier:
                 kaps = (sum_kap + self.k_0) * self.k_1 / (sum_kap + self.k_0 + self.k_1)
                 sum_skl = np.sum(s_kl, axis=2)
 
-                v_s[class_index] = np.sum(nkl) - num_species + self.m - embedding_dim + 1
-                sigmas[:, :, class_index] = psi + sum_skl
-                sig_s[:, :, class_index] = (psi + sum_skl) / ((kaps * v_s[class_index]) / (kaps + 1))
-                mu_s[class_index, :] = (np.sum(x_kl * (kap[:, np.newaxis]), axis=0) + self.k_0 * self.mu_0) / (
-                    sum_kap + self.k_0
+                v_s[class_index] = (
+                    np.sum(nkl) - num_species + self.m - embedding_dim + 1
                 )
+                sigmas[:, :, class_index] = psi + sum_skl
+                sig_s[:, :, class_index] = (psi + sum_skl) / (
+                    (kaps * v_s[class_index]) / (kaps + 1)
+                )
+                mu_s[class_index, :] = (
+                    np.sum(x_kl * (kap[:, np.newaxis]), axis=0) + self.k_0 * self.mu_0
+                ) / (sum_kap + self.k_0)
                 class_id[class_index] = unique_genera[genus_idx]
                 class_index += 1
             else:
@@ -327,7 +376,9 @@ class BayesianClassifier:
 
             norm2 = np.einsum("ij,ij->i", temp, temp)  # faster than np.sum(temp**2)
 
-            prob_mat[:, j] = tpar - 0.5 * (v_s[j] + embedding_dim) * np.log(1 + 1 / v_s[j] * norm2)
+            prob_mat[:, j] = tpar - 0.5 * (v_s[j] + embedding_dim) * np.log(
+                1 + 1 / v_s[j] * norm2
+            )
 
         bb = np.argmax(prob_mat, axis=1)
         return class_id[bb], prob_mat
@@ -360,7 +411,9 @@ class BayesianClassifier:
             temp = torch.linalg.lstsq(chsig.T, v.T)[0].T
             norm2 = torch.sum(temp * temp, dim=1)
 
-            prob_mat[:, j] = tpar - 0.5 * (v_s[j] + embedding_dim) * torch.log(1 + 1 / v_s[j] * norm2)
+            prob_mat[:, j] = tpar - 0.5 * (v_s[j] + embedding_dim) * torch.log(
+                1 + 1 / v_s[j] * norm2
+            )
 
         bb = torch.argmax(prob_mat, dim=1)
         return class_id[bb].cpu().numpy(), prob_mat.cpu().numpy()
@@ -378,7 +431,9 @@ class BayesianClassifier:
 
         for class_idx in range(num_classes):
             sample_indices = y_true == y_true_classes[class_idx]
-            per_class_acc[class_idx] = np.sum(y_true[sample_indices] == y_pred[sample_indices]) / np.sum(sample_indices)
+            per_class_acc[class_idx] = np.sum(
+                y_true[sample_indices] == y_pred[sample_indices]
+            ) / np.sum(sample_indices)
 
         acc = np.mean(per_class_acc)  # macro accuracy
 

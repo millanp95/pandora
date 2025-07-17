@@ -83,7 +83,11 @@ def extract_dna_features(
                 x = model(x)[0]
                 x = torch.max(x[0], dim=0)[0]  # max pooling
             else:
-                x = torch.tensor(sequence_pipeline(_barcode), dtype=torch.int64).unsqueeze(0).to(device)
+                x = (
+                    torch.tensor(sequence_pipeline(_barcode), dtype=torch.int64)
+                    .unsqueeze(0)
+                    .to(device)
+                )
                 x = model(x).hidden_states[-1]
                 x = x.mean(1)  # Global Average Pooling excluding CLS token
             x = x.cpu().numpy()

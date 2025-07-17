@@ -7,7 +7,8 @@ import urllib
 from inspect import getsourcefile
 
 import torch
-from transformers import BertConfig, BertForMaskedLM, BertForTokenClassification
+from transformers import (BertConfig, BertForMaskedLM,
+                          BertForTokenClassification)
 
 from .utils import remove_extra_pre_fix
 
@@ -154,7 +155,9 @@ def load_inference_model(checkpoint_path, config, device=None):
             "6_12_12": "https://vault.cs.uwaterloo.ca/s/GCfZdeZEDCcdSNf/download/new_model_6.pth",
         }
 
-        print(f"Checkpoint PATH not provided, searching for model {arch} in model_checkpoints/")
+        print(
+            f"Checkpoint PATH not provided, searching for model {arch} in model_checkpoints/"
+        )
 
         if config.from_paper:
             # create "model_chekpoints" folder
@@ -163,14 +166,18 @@ def load_inference_model(checkpoint_path, config, device=None):
 
             if not os.path.exists(f"model_checkpoints/{arch}.pt"):
                 # download model from the server
-                urllib.request.urlretrieve(available_archs[arch], filename=f"model_checkpoints/{arch}.pt")
+                urllib.request.urlretrieve(
+                    available_archs[arch], filename=f"model_checkpoints/{arch}.pt"
+                )
 
             checkpoint_path = f"model_checkpoints/{arch}.pt"
             model = load_old_pretrained_model(checkpoint_path, config, device=device)
 
         else:
             if os.path.exists(f"model_checkpoints/{arch}.pt"):
-                model, ckpt = load_pretrained_model(f"model_checkpoints/{arch}.pt", device=device)
+                model, ckpt = load_pretrained_model(
+                    f"model_checkpoints/{arch}.pt", device=device
+                )
             else:
                 raise NotImplementedError(
                     f"A new model checkpoint for {arch}.pt was not found. Automatic download is only available for published models"

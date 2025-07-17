@@ -6,11 +6,8 @@ from scipy.linalg import solve_triangular
 from scipy.spatial.distance import cdist
 from scipy.special import gammaln
 
-from barcodebert.bzsl.surrogate_species.utils import (
-    DataLoader,
-    apply_pca,
-    perf_calc_acc,
-)
+from barcodebert.bzsl.surrogate_species.utils import (DataLoader, apply_pca,
+                                                      perf_calc_acc)
 
 
 class Model:
@@ -30,7 +27,9 @@ class Model:
         self.use_genus = opt.genus
 
         if opt.m and opt.m % self.pca_dim != 0:
-            raise ValueError(f"m should be a multiple of the PCA dimension ({self.pca_dim}), but got {self.m} instead.")
+            raise ValueError(
+                f"m should be a multiple of the PCA dimension ({self.pca_dim}), but got {self.m} instead."
+            )
 
         self.k_0 = opt.k_0
         self.k_1 = opt.k_1
@@ -62,7 +61,9 @@ class Model:
         return mu_0, Sigma_0
 
     # Check for tie, if yes, change the last similar class with the next one untill tie broken
-    def check_for_tie(self, curr_unseen_class, usclass, seenclasses, curr_classes, s_in, K):
+    def check_for_tie(
+        self, curr_unseen_class, usclass, seenclasses, curr_classes, s_in, K
+    ):
         flag = True
         ect = 0
         while flag:
@@ -78,7 +79,20 @@ class Model:
         return curr_classes, usclass
 
     # Calculating Posterior Predictive Distribution parameters
-    def calculate_ppd_params(self, xtrain, ytrain, att_seen, att_unseen, unseenclasses, K, Psi, mu0, m, k0, k1):
+    def calculate_ppd_params(
+        self,
+        xtrain,
+        ytrain,
+        att_seen,
+        att_unseen,
+        unseenclasses,
+        K,
+        Psi,
+        mu0,
+        m,
+        k0,
+        k1,
+    ):
         seenclasses = np.unique(ytrain)
         nc = len(seenclasses) + len(unseenclasses)
         n, d = xtrain.shape
@@ -104,7 +118,9 @@ class Model:
 
             # Choose the K nearest neighbor to form surrogate class local prior
             classes = seenclasses[s_in[:K]]
-            classes, usclass_list = self.check_for_tie(uy[i], usclass_list, seenclasses, classes, s_in, K)
+            classes, usclass_list = self.check_for_tie(
+                uy[i], usclass_list, seenclasses, classes, s_in, K
+            )
 
             # Extract corresponding data
             idx = np.in1d(ytrain, classes)
@@ -132,7 +148,9 @@ class Model:
             sumkap = np.sum(kap)
             kaps = (sumkap + k0) * k1 / (sumkap + k0 + k1)
             sumSkl = np.sum(Skl, axis=2)
-            muk = (np.sum(np.multiply(xkl, kap * np.ones((1, d))), axis=0) + k0 * mu0) / (sumkap + k0)
+            muk = (
+                np.sum(np.multiply(xkl, kap * np.ones((1, d))), axis=0) + k0 * mu0
+            ) / (sumkap + k0)
             # Unseen classes' predictive cov, mean and dof
             v_s[cnt] = np.sum(nkl) - ncpi + m - d + 1
             class_id[cnt] = uy[i]
@@ -193,13 +211,21 @@ class Model:
                 sumkap = np.sum(kap)
                 kaps = (sumkap + k0) * k1 / (sumkap + k0 + k1)
                 sumSkl = np.sum(Skl, axis=2)
-                muk = (np.sum(np.multiply(xkl, kap * np.ones((1, d))), axis=0) + k0 * mu0) / (sumkap + k0)
+                muk = (
+                    np.sum(np.multiply(xkl, kap * np.ones((1, d))), axis=0) + k0 * mu0
+                ) / (sumkap + k0)
                 vsc = np.sum(nkl) - ncpi + m - d + 1
 
                 v_s[cnt] = vsc + cur_n
-                Smu = ((cur_n * kaps) / (kaps + cur_n)) * np.dot(cur_mu - muk, (cur_mu - muk).T)
-                Sigmas[:, :, cnt] = Psi + sumSkl + cur_S + Smu  # Just need for exp of rebuttal, then delete
-                Sig_s[:, :, cnt] = (Psi + sumSkl + cur_S + Smu) / (((cur_n + kaps) * v_s[cnt]) / (cur_n + kaps + 1))
+                Smu = ((cur_n * kaps) / (kaps + cur_n)) * np.dot(
+                    cur_mu - muk, (cur_mu - muk).T
+                )
+                Sigmas[:, :, cnt] = (
+                    Psi + sumSkl + cur_S + Smu
+                )  # Just need for exp of rebuttal, then delete
+                Sig_s[:, :, cnt] = (Psi + sumSkl + cur_S + Smu) / (
+                    ((cur_n + kaps) * v_s[cnt]) / (cur_n + kaps + 1)
+                )
                 mu_s[cnt] = (cur_n * cur_mu + kaps * muk) / (cur_n + kaps)
                 class_id[cnt] = uy[i]
                 cnt += 1
@@ -208,12 +234,15 @@ class Model:
             # is the case we used for seen classes as mentioned in the paper
             else:
                 v_s[cnt] = cur_n + m - d + 1
-                mu_s[cnt] = (cur_n * cur_mu + (k0 * k1 / (k0 + k1)) * mu0) / (cur_n + (k0 * k1 / (k0 + k1)))
-                Smu = ((cur_n * (k0 * k1 / (k0 + k1))) / ((k0 * k1 / (k0 + k1)) + cur_n)) * np.dot(
-                    cur_mu - mu0, (cur_mu - mu0).T
+                mu_s[cnt] = (cur_n * cur_mu + (k0 * k1 / (k0 + k1)) * mu0) / (
+                    cur_n + (k0 * k1 / (k0 + k1))
                 )
+                Smu = (
+                    (cur_n * (k0 * k1 / (k0 + k1))) / ((k0 * k1 / (k0 + k1)) + cur_n)
+                ) * np.dot(cur_mu - mu0, (cur_mu - mu0).T)
                 Sig_s[:, :, cnt] = (Psi + cur_S + Smu) / (
-                    ((cur_n + (k0 * k1 / (k0 + k1))) * v_s[cnt]) / (cur_n + (k0 * k1 / (k0 + k1)) + 1)
+                    ((cur_n + (k0 * k1 / (k0 + k1))) * v_s[cnt])
+                    / (cur_n + (k0 * k1 / (k0 + k1)) + 1)
                 )
                 class_id[cnt] = uy[i]
                 cnt += 1
@@ -253,13 +282,17 @@ class Model:
                 - (gl_pc[v_s[j] - 1] + (d / 2) * np.log(v_s[j]) + piconst)
                 - np.sum(np.log(chsig.diagonal()))
             )  # Stu-t lik part 1
-            temp = solve_triangular(chsig, v.T, overwrite_b=True, check_finite=False, lower=True).T  # mrdivide(v,chsig)
+            temp = solve_triangular(
+                chsig, v.T, overwrite_b=True, check_finite=False, lower=True
+            ).T  # mrdivide(v,chsig)
             norm2 = np.einsum("ij,ij->i", temp, temp)  # faster than np.sum(temp**2)
 
             lkh[:, j] = tpar - 0.5 * (v_s[j] + d) * np.log(1 + (1 / v_s[j]) * norm2)
 
         bb = np.argmax(lkh, axis=1)
-        ypred = class_id[bb]  # To ensure labels are correctly assigned back to original ones
+        ypred = class_id[
+            bb
+        ]  # To ensure labels are correctly assigned back to original ones
 
         return ypred, lkh
 
@@ -294,20 +327,30 @@ class Model:
 
         # Class predictive cov, mean and DoF from unconstrained model
         print("PPD derivation is Done!!")
-        return self.calculate_ppd_params(x_tr, y_tr, att_seen, att_unseen, us_classes, K, Psi, mu_0, m, k_0, k_1)
+        return self.calculate_ppd_params(
+            x_tr, y_tr, att_seen, att_unseen, us_classes, K, Psi, mu_0, m, k_0, k_1
+        )
 
     def hyperparameter_tuning(self, constrained=False):
         # Default # features for PCA id Unconstrained model selected
 
         dataloader = DataLoader(
-            self.datapath, self.dataset, self.side_info, self.tuning, self.alignment, self.embeddings, self.use_genus
+            self.datapath,
+            self.dataset,
+            self.side_info,
+            self.tuning,
+            self.alignment,
+            self.embeddings,
+            self.use_genus,
         )
 
         # load attribute
 
         att, _, _, _, _, _ = dataloader.load_tuned_params()
 
-        xtrain, ytrain, xtest_seen, ytest_seen, xtest_unseen, ytest_unseen = dataloader.data_split()
+        xtrain, ytrain, xtest_seen, ytest_seen, xtest_unseen, ytest_unseen = (
+            dataloader.data_split()
+        )
         dim = 500
 
         if self.pca_dim is not None:
@@ -328,8 +371,12 @@ class Model:
 
         if not constrained:
             print("Applying PCA to reduce the dimension...")
-            xtrain, xtest_seen, xtest_unseen = apply_pca(xtrain, xtest_seen, xtest_unseen, self.pca_dim)
-            [mu_0, Sigma_0] = self.calculate_priors(xtrain, ytrain, model_v="unconstrained")
+            xtrain, xtest_seen, xtest_unseen = apply_pca(
+                xtrain, xtest_seen, xtest_unseen, self.pca_dim
+            )
+            [mu_0, Sigma_0] = self.calculate_priors(
+                xtrain, ytrain, model_v="unconstrained"
+            )
             m_range = [5 * dim, 25 * dim, 100 * dim, 500 * dim]
             print("Tuning is getting started...")
             try:
@@ -339,30 +386,40 @@ class Model:
                             for m in m_range:
                                 for ss in s_range:
                                     time_s = time.time()
-                                    Sig_s, mu_s, v_s, class_id, _ = self.bayesian_cls_train(
-                                        xtrain,
-                                        ytrain,
-                                        dataloader.unseenclasses,
-                                        att,
-                                        k_0=k_0,
-                                        k_1=k_1,
-                                        m=m,
-                                        s=ss,
-                                        K=kk,
-                                        mu_0=mu_0,
-                                        Sigma_0=Sigma_0,
-                                        pca_dim=self.pca_dim,
-                                        tuning=True,
+                                    Sig_s, mu_s, v_s, class_id, _ = (
+                                        self.bayesian_cls_train(
+                                            xtrain,
+                                            ytrain,
+                                            dataloader.unseenclasses,
+                                            att,
+                                            k_0=k_0,
+                                            k_1=k_1,
+                                            m=m,
+                                            s=ss,
+                                            K=kk,
+                                            mu_0=mu_0,
+                                            Sigma_0=Sigma_0,
+                                            pca_dim=self.pca_dim,
+                                            tuning=True,
+                                        )
                                     )
 
                                     # Prediction phase
                                     ypred_unseen, _ = self.bayesian_cls_evaluate(
                                         xtest_unseen, Sig_s, mu_s, v_s, class_id
                                     )
-                                    ypred_seen, _ = self.bayesian_cls_evaluate(xtest_seen, Sig_s, mu_s, v_s, class_id)
+                                    ypred_seen, _ = self.bayesian_cls_evaluate(
+                                        xtest_seen, Sig_s, mu_s, v_s, class_id
+                                    )
 
-                                    _, _, gzsl_seen_acc, gzsl_unseen_acc, H = perf_calc_acc(
-                                        ytest_seen, ytest_unseen, ypred_seen, ypred_unseen, dataloader.label_to_genus
+                                    _, _, gzsl_seen_acc, gzsl_unseen_acc, H = (
+                                        perf_calc_acc(
+                                            ytest_seen,
+                                            ytest_unseen,
+                                            ypred_seen,
+                                            ypred_unseen,
+                                            dataloader.label_to_genus,
+                                        )
                                     )
                                     print(
                                         "\nCurrent parameters k0=%.2f, k1=%.2f, m=%d, s=%.1f, K=%d on dataset:"
@@ -382,12 +439,18 @@ class Model:
                                         )
                                         print(
                                             "BSeen acc: %.2f%% Unseen acc: %.2f%%, Harmonic mean: %.2f%%\n"
-                                            % (gzsl_seen_acc * 100, gzsl_unseen_acc * 100, H * 100)
+                                            % (
+                                                gzsl_seen_acc * 100,
+                                                gzsl_unseen_acc * 100,
+                                                H * 100,
+                                            )
                                         )
                                     time_e = time.time()
                                     print("total cost: " + str(time_e - time_s))
             except KeyboardInterrupt:
-                print("Grid search interrupted. Returning best results found up to this point.")
+                print(
+                    "Grid search interrupted. Returning best results found up to this point."
+                )
         else:
             # TODO: hyper-parameter tuning for constrained model, ignored for now.
             pass
@@ -437,9 +500,13 @@ class Model:
         parameters obtained by CV
         """
 
-        xtrain, ytrain, xtest_seen, ytest_seen, xtest_unseen, ytest_unseen = dataloader.data_split()
+        xtrain, ytrain, xtest_seen, ytest_seen, xtest_unseen, ytest_unseen = (
+            dataloader.data_split()
+        )
         if self.pca_dim:
-            xtrain, xtest_seen, xtest_unseen = apply_pca(xtrain, xtest_seen, xtest_unseen, self.pca_dim)
+            xtrain, xtest_seen, xtest_unseen = apply_pca(
+                xtrain, xtest_seen, xtest_unseen, self.pca_dim
+            )
         time_s = time.time()
         # PPD parameter estimation
         Sig_s, mu_s, v_s, class_id, _ = self.bayesian_cls_train(
@@ -457,14 +524,27 @@ class Model:
         )
 
         # Prediction phase
-        ypred_unseen, prob_mat_unseen = self.bayesian_cls_evaluate(xtest_unseen, Sig_s, mu_s, v_s, class_id)
-        ypred_seen, prob_mat_seen = self.bayesian_cls_evaluate(xtest_seen, Sig_s, mu_s, v_s, class_id)
-
-        acc_per_cls_s, acc_per_cls_us, gzsl_seen_acc, gzsl_unseen_acc, H = perf_calc_acc(
-            ytest_seen, ytest_unseen, ypred_seen, ypred_unseen, dataloader.label_to_genus
+        ypred_unseen, prob_mat_unseen = self.bayesian_cls_evaluate(
+            xtest_unseen, Sig_s, mu_s, v_s, class_id
+        )
+        ypred_seen, prob_mat_seen = self.bayesian_cls_evaluate(
+            xtest_seen, Sig_s, mu_s, v_s, class_id
         )
 
-        print("Results from k0=%.2f, k1=%.2f, m=%d, s=%.1f, K=%d on dataset:" % (k_0, k_1, m, s, K))
+        acc_per_cls_s, acc_per_cls_us, gzsl_seen_acc, gzsl_unseen_acc, H = (
+            perf_calc_acc(
+                ytest_seen,
+                ytest_unseen,
+                ypred_seen,
+                ypred_unseen,
+                dataloader.label_to_genus,
+            )
+        )
+
+        print(
+            "Results from k0=%.2f, k1=%.2f, m=%d, s=%.1f, K=%d on dataset:"
+            % (k_0, k_1, m, s, K)
+        )
         print(
             "BSeen acc: %.2f%% Unseen acc: %.2f%%, Harmonic mean: %.2f%%"
             % (gzsl_seen_acc * 100, gzsl_unseen_acc * 100, H * 100)
@@ -475,7 +555,11 @@ class Model:
                 json.dump(
                     {
                         "parameters": {"k0": k_0, "k1": k_1, "m": m, "s": s, "K": K},
-                        "results": {"seen_acc": gzsl_seen_acc, "unseen_acc": gzsl_unseen_acc, "harmonic_mean": H},
+                        "results": {
+                            "seen_acc": gzsl_seen_acc,
+                            "unseen_acc": gzsl_unseen_acc,
+                            "harmonic_mean": H,
+                        },
                     },
                     f,
                     indent=2,

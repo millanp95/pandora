@@ -9,7 +9,14 @@ from scipy.linalg import eigh
 
 class DataLoader:
     def __init__(
-        self, datapath, dataset, side_info="original", tuning=False, alignment=True, embeddings=None, use_genus=False
+        self,
+        datapath,
+        dataset,
+        side_info="original",
+        tuning=False,
+        alignment=True,
+        embeddings=None,
+        use_genus=False,
     ):
         print("The current working directory is")
         print(os.getcwd())
@@ -39,38 +46,56 @@ class DataLoader:
         elif self.side_info_source == "dna_pablo_bert":
             if self.alignment is True:
                 print("Aligned")
-                return os.path.join(self.datapath, "dna_embedding_using_bert_of_pablo_team.csv")
+                return os.path.join(
+                    self.datapath, "dna_embedding_using_bert_of_pablo_team.csv"
+                )
             else:
                 print("Not aligned")
-                return os.path.join(self.datapath, "dna_embedding_using_bert_of_pablo_team_no_alignment.csv")
+                return os.path.join(
+                    self.datapath,
+                    "dna_embedding_using_bert_of_pablo_team_no_alignment.csv",
+                )
         elif self.side_info_source == "dna_dnabert":
             if self.alignment is True:
                 print("Aligned")
-                return os.path.join(self.datapath, "dna_embedding_insect_dnabert_aligned.csv")
+                return os.path.join(
+                    self.datapath, "dna_embedding_insect_dnabert_aligned.csv"
+                )
             else:
                 print("Not aligned")
                 return os.path.join(self.datapath, "dna_embedding_insect_dnabert.csv")
         elif self.side_info_source == "dna_dnabert2":
             if self.alignment is True:
                 print("Aligned")
-                return os.path.join(self.datapath, "dna_embedding_insect_dnabert2_aligned.csv")
+                return os.path.join(
+                    self.datapath, "dna_embedding_insect_dnabert2_aligned.csv"
+                )
             else:
                 print("Not aligned")
                 return os.path.join(self.datapath, "dna_embedding_insect_dnabert2.csv")
         elif self.side_info_source == "dna_pablo_bert_tuned":
             if self.alignment is True:
                 print("Aligned")
-                return os.path.join(self.datapath, "dna_embedding_supervised_fine_tuned_pablo_bert_aligned.csv")
+                return os.path.join(
+                    self.datapath,
+                    "dna_embedding_supervised_fine_tuned_pablo_bert_aligned.csv",
+                )
             else:
                 print("Not aligned")
-                return os.path.join(self.datapath, "dna_embedding_supervised_fine_tuned_pablo_bert.csv")
+                return os.path.join(
+                    self.datapath, "dna_embedding_supervised_fine_tuned_pablo_bert.csv"
+                )
         elif self.side_info_source == "dna_pablo_bert_mlm_tuned":
             if self.alignment is True:
                 print("Aligned")
-                return os.path.join(self.datapath, "dna_embedding_mlm_fine_tuned_pablo_bert_aligned.csv")
+                return os.path.join(
+                    self.datapath, "dna_embedding_mlm_fine_tuned_pablo_bert_aligned.csv"
+                )
             else:
                 print("Not aligned")
-                return os.path.join(self.datapath, "dna_embedding_mlm_fine_tuned_pablo_bert.csv")
+                return os.path.join(
+                    self.datapath, "dna_embedding_mlm_fine_tuned_pablo_bert.csv"
+                )
 
         elif self.side_info_source == "dna_pablo_bert_tuned_5_mer":
             if self.alignment is True:
@@ -82,7 +107,10 @@ class DataLoader:
                 )
             else:
                 print("Not aligned")
-                return os.path.join(self.datapath, "dna_embedding_supervised_fine_tuned_pablo_bert_5_mer_ep_40.csv")
+                return os.path.join(
+                    self.datapath,
+                    "dna_embedding_supervised_fine_tuned_pablo_bert_5_mer_ep_40.csv",
+                )
 
         if self.side_info_source == "w2v":
             return splits_mat["att_w2v"]
@@ -105,17 +133,23 @@ class DataLoader:
 
         self.trainval_loc = splits_mat["trainval_loc"].ravel() - 1
         self.train_loc = splits_mat["train_loc"].ravel() - 1
-        self.val_unseen_loc = splits_mat.get("val_loc", splits_mat.get("val_unseen_loc")).ravel() - 1
+        self.val_unseen_loc = (
+            splits_mat.get("val_loc", splits_mat.get("val_unseen_loc")).ravel() - 1
+        )
         self.test_seen_loc = splits_mat["test_seen_loc"].ravel() - 1
         self.test_unseen_loc = splits_mat["test_unseen_loc"].ravel() - 1
-        self.side_info = np.genfromtxt(self.get_embeddings_path(self.embeddings, splits_mat), delimiter=",")
+        self.side_info = np.genfromtxt(
+            self.get_embeddings_path(self.embeddings, splits_mat), delimiter=","
+        )
 
         if self.use_genus:  # generate mapping of species classes to genera
             # find genus labels per sample
             # genus labels will start at max_label + 1 (e.g. for 1213 species classes, genus labels start at 1213)
             genera = [species[0][0].split()[0] for species in data_mat["species"]]
             unique_genera = np.unique(genera)
-            genus_to_idx = dict(zip(unique_genera, self.num_species + np.arange(len(genera))))
+            genus_to_idx = dict(
+                zip(unique_genera, self.num_species + np.arange(len(genera)))
+            )
             self.genus_labels = np.array([genus_to_idx[g] for g in genera])
 
             # build mapping of species label to genus label
@@ -133,7 +167,9 @@ class DataLoader:
 
     def data_split(self):
         if self.tuning:
-            train_idx, test_seen_idx = crossvalind_holdout(self.labels, self.train_loc, 0.2)
+            train_idx, test_seen_idx = crossvalind_holdout(
+                self.labels, self.train_loc, 0.2
+            )
             test_unseen_idx = self.val_unseen_loc
         else:
             train_idx = self.trainval_loc

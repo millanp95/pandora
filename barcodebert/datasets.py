@@ -29,7 +29,9 @@ class KmerTokenizer(object):
             if len(x) > self.max_len:
                 x = x[: self.max_len]
             else:
-                att_mask[len(x) // self.stride :] = [0] * (len(att_mask) - len(x) // self.stride)
+                att_mask[len(x) // self.stride :] = [0] * (
+                    len(att_mask) - len(x) // self.stride
+                )
                 x = x + "N" * (self.max_len - len(x))
         for i in range(0, len(x) - self.k + 1, self.stride):
             k_mer = x[i : i + self.k]
@@ -77,7 +79,9 @@ class BPETokenizer(object):
             att_mask = [1] * self.max_tokenized_len
             tokens = tokens[: self.max_tokenized_len]
         else:
-            att_mask = [1] * (len(tokens)) + [0] * (self.max_tokenized_len - len(tokens))
+            att_mask = [1] * (len(tokens)) + [0] * (
+                self.max_tokenized_len - len(tokens)
+            )
             tokens = tokens + [1] * (self.max_tokenized_len - len(tokens))
 
         att_mask = torch.tensor(att_mask, dtype=torch.int32)
@@ -110,7 +114,10 @@ class DNADataset(Dataset):
         if tokenizer == "kmer":
             # Vocabulary
             base_pairs = "ACGT"
-            self.special_tokens = ["[MASK]", "[UNK]"]  # ["[MASK]", "[CLS]", "[SEP]", "[PAD]", "[EOS]", "[UNK]"]
+            self.special_tokens = [
+                "[MASK]",
+                "[UNK]",
+            ]  # ["[MASK]", "[CLS]", "[SEP]", "[PAD]", "[EOS]", "[UNK]"]
             UNK_TOKEN = "[UNK]"
 
             if tokenize_n_nucleotide:
@@ -135,14 +142,24 @@ class DNADataset(Dataset):
             self.vocab.set_default_index(self.vocab[UNK_TOKEN])
             self.vocab_size = len(self.vocab)
             self.tokenizer = KmerTokenizer(
-                self.k_mer, self.vocab, stride=self.stride, padding=True, max_len=self.max_len
+                self.k_mer,
+                self.vocab,
+                stride=self.stride,
+                padding=True,
+                max_len=self.max_len,
             )
         elif tokenizer == "bpe":
-            self.tokenizer = BPETokenizer(padding=True, max_tokenized_len=self.max_len, bpe_path=bpe_path)
+            self.tokenizer = BPETokenizer(
+                padding=True, max_tokenized_len=self.max_len, bpe_path=bpe_path
+            )
             self.vocab_size = self.tokenizer.bpe.vocab_size
         else:
             raise ValueError(f'Tokenizer "{tokenizer}" not recognized.')
-        df = pd.read_csv(file_path, sep="\t" if file_path.endswith(".tsv") else ",", keep_default_na=False)
+        df = pd.read_csv(
+            file_path,
+            sep="\t" if file_path.endswith(".tsv") else ",",
+            keep_default_na=False,
+        )
         self.barcodes = df["nucleotides"].to_list()
 
         if dataset_format == "CANADA-1.5M":
@@ -175,7 +192,9 @@ def representations_from_df(df, target_level, model, tokenizer, dataset_name):
         # _label_set = np.unique(df[target_level])
         y = df[target_level]
     else:
-        raise NotImplementedError("Dataset format is not supported. Must be one of CANADA-1.5M or BIOSCAN-5M")
+        raise NotImplementedError(
+            "Dataset format is not supported. Must be one of CANADA-1.5M or BIOSCAN-5M"
+        )
 
     dna_embeddings = []
 
@@ -192,7 +211,9 @@ def representations_from_df(df, target_level, model, tokenizer, dataset_name):
 
             # updated mean pooling to account for the attention mask and padding tokens
             # sum the embeddings of the tokens (excluding padding tokens)
-            sum_embeddings = (x * att_mask.unsqueeze(-1)).sum(1)  # (batch_size, hidden_size)
+            sum_embeddings = (x * att_mask.unsqueeze(-1)).sum(
+                1
+            )  # (batch_size, hidden_size)
             # sum the attention mask (number of tokens in the sequence without considering the padding tokens)
             sum_mask = att_mask.sum(1, keepdim=True)
             # calculate the mean embeddings

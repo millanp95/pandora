@@ -14,11 +14,11 @@ from torch import nn
 from torchtext.vocab import vocab as build_vocab_from_dict
 
 from barcodebert import utils
-from barcodebert.datasets import BPETokenizer, KmerTokenizer, representations_from_df
+from barcodebert.datasets import (BPETokenizer, KmerTokenizer,
+                                  representations_from_df)
 from barcodebert.io import load_pretrained_model
 
 
- 
 def run_knn(config):
     r"""
     Run kNN job, using a single GPU worker to create the embeddings.
@@ -39,7 +39,9 @@ def run_knn(config):
         utils.set_rng_seeds_fixed(config.seed)
 
     if config.deterministic:
-        print("Running in deterministic cuDNN mode. Performance may be slower, but more reproducible.")
+        print(
+            "Running in deterministic cuDNN mode. Performance may be slower, but more reproducible."
+        )
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
@@ -48,13 +50,18 @@ def run_knn(config):
     print()
     print(config)
     print()
-    print(f"Found {torch.cuda.device_count()} GPUs and {utils.get_num_cpu_available()} CPUs.", flush=True)
+    print(
+        f"Found {torch.cuda.device_count()} GPUs and {utils.get_num_cpu_available()} CPUs.",
+        flush=True,
+    )
 
     device = torch.device("cuda") if torch.cuda.is_available() else "cpu"
 
     # LOAD PRE-TRAINED CHECKPOINT =============================================
     # Map model parameters to be load to the specified gpu.
-    model, pre_checkpoint = load_pretrained_model(config.pretrained_checkpoint_path, device=device)
+    model, pre_checkpoint = load_pretrained_model(
+        config.pretrained_checkpoint_path, device=device
+    )
     # Override the classifier with an identity function as we only want the embeddings
     model.classifier = nn.Identity()
     model = model.to(device)
@@ -73,11 +80,19 @@ def run_knn(config):
         "n_heads",
         "dataset_name",
     ]
-    default_kwargs = vars(get_parser().parse_args(["--pretrained_checkpoint=dummy.pt", "--dataset=foo_bar"]))
+    default_kwargs = vars(
+        get_parser().parse_args(
+            ["--pretrained_checkpoint=dummy.pt", "--dataset=foo_bar"]
+        )
+    )
     for key in keys_to_reuse:
-        if not hasattr(config, key) or getattr(config, key) == getattr(pre_checkpoint["config"], key):
+        if not hasattr(config, key) or getattr(config, key) == getattr(
+            pre_checkpoint["config"], key
+        ):
             pass
-        elif getattr(config, key) is None or getattr(config, key) == default_kwargs[key]:
+        elif (
+            getattr(config, key) is None or getattr(config, key) == default_kwargs[key]
+        ):
             print(
                 f"  Overriding default config value {key}={getattr(config, key)}"
                 f" with {getattr(pre_checkpoint['config'], key)} from pretained checkpoint."
@@ -120,10 +135,18 @@ def run_knn(config):
         kmer_dict = dict.fromkeys(kmers, 1)
         vocab = build_vocab_from_dict(kmer_dict, specials=specials)
         vocab.set_default_index(vocab[UNK_TOKEN])
-        tokenizer = KmerTokenizer(config.k_mer, vocab, stride=config.k_mer, padding=True, max_len=config.max_len)
+        tokenizer = KmerTokenizer(
+            config.k_mer,
+            vocab,
+            stride=config.k_mer,
+            padding=True,
+            max_len=config.max_len,
+        )
 
     elif config.tokenizer == "bpe":
-        tokenizer = BPETokenizer(padding=True, max_tokenized_len=config.max_len, bpe_path=config.bpe_path)
+        tokenizer = BPETokenizer(
+            padding=True, max_tokenized_len=config.max_len, bpe_path=config.bpe_path
+        )
 
     df_train = pd.read_csv(os.path.join(config.data_dir, "supervised_train.csv"))
     df_test = pd.read_csv(os.path.join(config.data_dir, "unseen.csv"))
@@ -136,7 +159,9 @@ def run_knn(config):
         elif config.dataset_name == "BIOSCAN-5M":
             config.target_level = config.taxon + "_index"
         else:
-            raise NotImplementedError("Dataset format is not supported. Must be one of CANADA-1.5M or BIOSCAN-5M")
+            raise NotImplementedError(
+                "Dataset format is not supported. Must be one of CANADA-1.5M or BIOSCAN-5M"
+            )
 
     timing_stats["preamble"] = time.time() - t_start
 
@@ -149,7 +174,9 @@ def run_knn(config):
         df_test, config.target_level, model, tokenizer, config.dataset_name
     )
     print("Generating embeddings for train set", flush=True)
-    X, y, train_orders = representations_from_df(df_train, config.target_level, model, tokenizer, config.dataset_name)
+    X, y, train_orders = representations_from_df(
+        df_train, config.target_level, model, tokenizer, config.dataset_name
+    )
     timing_stats["embed"] = time.time() - t_start_embed
 
     c = 0
@@ -164,7 +191,9 @@ def run_knn(config):
     minutes = (dt - (3600 * hour)) // 60
     seconds = dt - (hour * 3600) - (minutes * 60)
     memory = running_info.ru_maxrss / 1e6
-    print(f"Creating embeddings took: {int(hour)}:{int(minutes):02d}:{seconds:02.0f} (hh:mm:ss)\n")
+    print(
+        f"Creating embeddings took: {int(hour)}:{int(minutes):02d}:{seconds:02.0f} (hh:mm:ss)\n"
+    )
     print(f"Max memory usage: {memory} (GB)")
 
     # kNN =====================================================================
@@ -180,16 +209,27 @@ def run_knn(config):
     t_start_test = time.time()
     # Create results dictionary
     results = {}
-    for partition_name, X_part, y_part in [("Train", X, y), ("Unseen", X_unseen, y_unseen)]:
+    for partition_name, X_part, y_part in [
+        ("Train", X, y),
+        ("Unseen", X_unseen, y_unseen),
+    ]:
         y_pred = clf.predict(X_part)
         res_part = {}
         res_part["count"] = len(y_part)
         # Note that these evaluation metrics have all been converted to percentages
         res_part["accuracy"] = 100.0 * sklearn.metrics.accuracy_score(y_part, y_pred)
-        res_part["accuracy-balanced"] = 100.0 * sklearn.metrics.balanced_accuracy_score(y_part, y_pred)
-        res_part["f1-micro"] = 100.0 * sklearn.metrics.f1_score(y_part, y_pred, average="micro")
-        res_part["f1-macro"] = 100.0 * sklearn.metrics.f1_score(y_part, y_pred, average="macro")
-        res_part["f1-support"] = 100.0 * sklearn.metrics.f1_score(y_part, y_pred, average="weighted")
+        res_part["accuracy-balanced"] = 100.0 * sklearn.metrics.balanced_accuracy_score(
+            y_part, y_pred
+        )
+        res_part["f1-micro"] = 100.0 * sklearn.metrics.f1_score(
+            y_part, y_pred, average="micro"
+        )
+        res_part["f1-macro"] = 100.0 * sklearn.metrics.f1_score(
+            y_part, y_pred, average="macro"
+        )
+        res_part["f1-support"] = 100.0 * sklearn.metrics.f1_score(
+            y_part, y_pred, average="weighted"
+        )
         results[partition_name] = res_part
         print(f"\n{partition_name} evaluation results:")
         for k, v in res_part.items():
@@ -205,10 +245,14 @@ def run_knn(config):
     hour = dt // 3600
     minutes = (dt - (3600 * hour)) // 60
     seconds = dt - (hour * 3600) - (minutes * 60)
-    print(f"The code finished after: {int(hour)}:{int(minutes):02d}:{seconds:02.0f} (hh:mm:ss)\n")
+    print(
+        f"The code finished after: {int(hour)}:{int(minutes):02d}:{seconds:02.0f} (hh:mm:ss)\n"
+    )
 
     with open("KNN_RESULTS.txt", "a") as f:
-        model_name = os.path.join(*os.path.split(config.pretrained_checkpoint_path)[-2:])
+        model_name = os.path.join(
+            *os.path.split(config.pretrained_checkpoint_path)[-2:]
+        )
         f.write(f"\n{model_name} \t {acc:.4f}")
 
     timing_stats["overall"] = time.time() - t_start
@@ -237,7 +281,9 @@ def run_knn(config):
             group=config.pretrained_run_id,
             entity=config.wandb_entity,
             project=config.wandb_project,
-            config=wandb.helper.parse_config(config, exclude=EXCLUDED_WANDB_CONFIG_KEYS),
+            config=wandb.helper.parse_config(
+                config, exclude=EXCLUDED_WANDB_CONFIG_KEYS
+            ),
             job_type=job_type,
             tags=["evaluate", job_type],
         )
@@ -246,7 +292,11 @@ def run_knn(config):
         wandb.log(
             {
                 **{f"knn/duration/{k}": v for k, v in timing_stats.items()},
-                **{f"knn/{partition}/{k}": v for partition, res in results.items() for k, v in res.items()},
+                **{
+                    f"knn/{partition}/{k}": v
+                    for partition, res in results.items()
+                    for k, v in res.items()
+                },
             },
         )
 

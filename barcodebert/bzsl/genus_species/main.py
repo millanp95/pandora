@@ -7,21 +7,22 @@ import numpy as np
 import torch
 
 from barcodebert.bzsl.genus_species.bayesian_classifier import (
-    BayesianClassifier,
-    apply_pca,
-    calculate_priors,
-)
+    BayesianClassifier, apply_pca, calculate_priors)
 from barcodebert.bzsl.genus_species.dataset import get_data_splits, load_data
 
 
 def normalize(embeddings: np.ndarray):
-    return (embeddings - np.mean(embeddings, axis=1, keepdims=True)) / np.std(embeddings, axis=1, ddof=1, keepdims=True)
+    return (embeddings - np.mean(embeddings, axis=1, keepdims=True)) / np.std(
+        embeddings, axis=1, ddof=1, keepdims=True
+    )
 
 
 def ridge_regression(embeddings_dna: np.ndarray, embeddings_img: np.ndarray, rho: int):
     image_dim = embeddings_img.shape[1]
 
-    DXT = np.matmul(embeddings_dna.T, embeddings_img)  # dim: [dna_embedding_dim, img_embedding_dim]
+    DXT = np.matmul(
+        embeddings_dna.T, embeddings_img
+    )  # dim: [dna_embedding_dim, img_embedding_dim]
     denom = np.matmul(embeddings_img.T, embeddings_img) + rho * np.identity(image_dim)
     # NOTE: this does not seem to be giving a value equivalent to mrdivide in matlab. If you fix this, then you can
     # reproduce the original results to at least 4 decimal points.
@@ -57,7 +58,9 @@ def load_tuned_params(
     if s is not None:
         params[3] = s
 
-    assert all(p is not None for p in params), f"expected all params to be specified, but found {params}"
+    assert all(
+        p is not None for p in params
+    ), f"expected all params to be specified, but found {params}"
 
     return tuple(params)
 
@@ -95,7 +98,9 @@ def tune_hyperparameters(
     best_s = None
 
     # apply pca
-    x_train, x_test_seen, x_test_unseen = apply_pca(pca_dim, x_train, x_test_seen, x_test_unseen)
+    x_train, x_test_seen, x_test_unseen = apply_pca(
+        pca_dim, x_train, x_test_seen, x_test_unseen
+    )
 
     # precalculation of class means and scatter matrices for unconstrained model
     mu_0, scatter = calculate_priors(x_train, y_train)
@@ -106,7 +111,9 @@ def tune_hyperparameters(
             for m in m_range:
                 for s in s_range:
                     try:
-                        bcls = BayesianClassifier(k_0, k_1, m, s, mu_0=mu_0, scatter=scatter)
+                        bcls = BayesianClassifier(
+                            k_0, k_1, m, s, mu_0=mu_0, scatter=scatter
+                        )
                         seen_acc, unseen_acc, harmonic_mean = bcls.classify(
                             x_train,
                             y_train,
@@ -141,7 +148,9 @@ def tune_hyperparameters(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--datapath", type=str, help="path to folder containing data and splits files")
+    parser.add_argument(
+        "--datapath", type=str, help="path to folder containing data and splits files"
+    )
     parser.add_argument(
         "--model",
         default="OSBC_DNA",
@@ -150,8 +159,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--tuning", default=False, action="store_true")
     parser.add_argument("--embeddings", default=None, type=str)
-    parser.add_argument("--rho", type=int, default=1, help="rho for transductive approach")
-    parser.add_argument("--pca", type=int, default=500, help="dimension of PCA for image embedding")
+    parser.add_argument(
+        "--rho", type=int, default=1, help="rho for transductive approach"
+    )
+    parser.add_argument(
+        "--pca", type=int, default=500, help="dimension of PCA for image embedding"
+    )
     parser.add_argument(
         "--k0",
         dest="k_0",
@@ -173,9 +186,19 @@ if __name__ == "__main__":
         type=int,
         help="defines dimension of Wishart distribution for sampling covariance matrices of metaclasses",
     )
-    parser.add_argument("-s", dest="s", default=None, type=float, help="scalar for mean of class covariances")
     parser.add_argument(
-        "--output", default=None, type=str, dest="output", help="path to save final results after tuning"
+        "-s",
+        dest="s",
+        default=None,
+        type=float,
+        help="scalar for mean of class covariances",
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        type=str,
+        dest="output",
+        help="path to save final results after tuning",
     )
     args = parser.parse_args()
 
@@ -195,7 +218,11 @@ if __name__ == "__main__":
     if model == "OSBC_DIT":  # transductive
         print("Learning map for ridge regression...")
 
-        st = [splits["trainval_loc"], splits["test_unseen_loc"], splits["test_seen_loc"]]
+        st = [
+            splits["trainval_loc"],
+            splits["test_unseen_loc"],
+            splits["test_seen_loc"],
+        ]
 
         # normalize vectors
         embeddings_dna = normalize(embeddings_dna)
@@ -206,7 +233,15 @@ if __name__ == "__main__":
 
     if args.tuning:
         print("Starting hyperparameter tuning for k_0, k_1, m, and s...")
-        x_train, y_train, x_test_unseen, y_test_unseen, x_test_seen, y_test_seen, x_train_img = get_data_splits(
+        (
+            x_train,
+            y_train,
+            x_test_unseen,
+            y_test_unseen,
+            x_test_seen,
+            y_test_seen,
+            x_train_img,
+        ) = get_data_splits(
             embeddings_dna, embeddings_img, labels, splits, args.tuning, model
         )
         if model == "OSBC_DIT":  # transductive
@@ -215,7 +250,15 @@ if __name__ == "__main__":
             y_train = np.concatenate((y_train, y_train), axis=0)
 
         k_0, k_1, m, s, pca_dim = tune_hyperparameters(
-            x_train, y_train, x_test_unseen, y_test_unseen, x_test_seen, y_test_seen, genera, model, args.pca
+            x_train,
+            y_train,
+            x_test_unseen,
+            y_test_unseen,
+            x_test_seen,
+            y_test_seen,
+            genera,
+            model,
+            args.pca,
         )
     else:
         k_0, k_1, m, s, pca_dim = load_tuned_params(
@@ -223,9 +266,15 @@ if __name__ == "__main__":
         )
 
     print("Running inference for selected hyperparameters...")
-    x_train, y_train, x_test_unseen, y_test_unseen, x_test_seen, y_test_seen, x_train_img = get_data_splits(
-        embeddings_dna, embeddings_img, labels, splits, False, model
-    )
+    (
+        x_train,
+        y_train,
+        x_test_unseen,
+        y_test_unseen,
+        x_test_seen,
+        y_test_seen,
+        x_train_img,
+    ) = get_data_splits(embeddings_dna, embeddings_img, labels, splits, False, model)
 
     # data augmentation from transductive method
     if model == "OSBC_DIT":  # transductive
@@ -237,10 +286,19 @@ if __name__ == "__main__":
     bcls = BayesianClassifier(model, k_0, k_1, m, s)
     start_time = time.time()
     seen_acc, unseen_acc, harmonic_mean = bcls.classify(
-        x_train, y_train, x_test_unseen, y_test_unseen, x_test_seen, y_test_seen, genera, pca=pca_dim
+        x_train,
+        y_train,
+        x_test_unseen,
+        y_test_unseen,
+        x_test_seen,
+        y_test_seen,
+        genera,
+        pca=pca_dim,
     )
     end_time = time.time()
 
     print(f"Results from {k_0=:.2f}, {k_1=:.2f}, {m=}, {s=:.1f}:")
-    print(f"Model {model} results on dataset: {seen_acc=:.4f}, {unseen_acc=:.4f}, {harmonic_mean=:.4f}")
+    print(
+        f"Model {model} results on dataset: {seen_acc=:.4f}, {unseen_acc=:.4f}, {harmonic_mean=:.4f}"
+    )
     print(f"Inference runtime: {end_time - start_time:.2f} seconds")

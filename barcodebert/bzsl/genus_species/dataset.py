@@ -41,4 +41,12 @@ def get_data_splits(embeddings_dna, embeddings_img, labels, splits, is_tuning, m
     x_test_unseen = features[test_unseen_idx, :]
     y_test_unseen = labels[test_unseen_idx].flatten()
 
-    return x_train, y_train, x_test_unseen, y_test_unseen, x_test_seen, y_test_seen, x_train_img
+    return (
+        x_train,
+        y_train,
+        x_test_unseen,
+        y_test_unseen,
+        x_test_seen,
+        y_test_seen,
+        x_train_img,
+    )

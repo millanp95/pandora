@@ -16,14 +16,17 @@ torchtext.disable_torchtext_deprecation_warning()
 from torchtext.vocab import build_vocab_from_iterator
 
 from barcodebert import utils
-from barcodebert.datasets import KmerTokenizer, inference_from_df, inference_from_fasta
+from barcodebert.datasets import (KmerTokenizer, inference_from_df,
+                                  inference_from_fasta)
 from barcodebert.io import load_inference_model
 
 
 def inference_on_file(file, model, tokenizer):
     if file.endswith((".csv", ".tsv")):
         print(f"Generating embeddings for {file}", flush=True)
-        df = pd.read_csv(file, sep="\t" if file.endswith(".tsv") else ",", keep_default_na=False)
+        df = pd.read_csv(
+            file, sep="\t" if file.endswith(".tsv") else ",", keep_default_na=False
+        )
         embeddings = inference_from_df(df, model, tokenizer)
 
     elif file.endswith((".fas", ".fa")):
@@ -50,7 +53,9 @@ def run(config):
         utils.set_rng_seeds_fixed(config.seed)
 
     if config.deterministic:
-        print("Running in deterministic cuDNN mode. Performance may be slower, but more reproducible.")
+        print(
+            "Running in deterministic cuDNN mode. Performance may be slower, but more reproducible."
+        )
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
@@ -59,7 +64,10 @@ def run(config):
     print()
     print(config)
     print()
-    print(f"Found {torch.cuda.device_count()} GPUs and {utils.get_num_cpu_available()} CPUs.", flush=True)
+    print(
+        f"Found {torch.cuda.device_count()} GPUs and {utils.get_num_cpu_available()} CPUs.",
+        flush=True,
+    )
 
     device = torch.device("cuda") if torch.cuda.is_available() else "cpu"
 
@@ -69,7 +77,9 @@ def run(config):
 
     # LOAD PRE-TRAINED CHECKPOINT =============================================
     # Map model parameters to be load to the specified gpu.
-    model, pre_checkpoint = load_inference_model(config.pretrained_checkpoint_path, config, device=device)
+    model, pre_checkpoint = load_inference_model(
+        config.pretrained_checkpoint_path, config, device=device
+    )
     # Override the classifier with an identity function as we only want the embeddings
     model.classifier = nn.Identity()
     model = model.to(device)
@@ -86,7 +96,9 @@ def run(config):
     if not config.from_paper:
         default_kwargs = vars(get_parser().parse_args(["--input=dummy.pt"]))
         for key in keys_to_reuse:
-            if not hasattr(config, key) or getattr(config, key) == getattr(pre_checkpoint["config"], key):
+            if not hasattr(config, key) or getattr(config, key) == getattr(
+                pre_checkpoint["config"], key
+            ):
                 pass
             elif getattr(config, key) == default_kwargs[key]:
                 print(
@@ -108,16 +120,22 @@ def run(config):
     if not config.use_unk_token:
         kmer_iter = (["".join(kmer)] for kmer in product("ACGTN", repeat=config.k_mer))
         vocab = build_vocab_from_iterator(kmer_iter, specials=["<MASK>"])
-        vocab.set_default_index(vocab["N" * config.k_mer])  # <UNK> and <CLS> do not exist anymore
+        vocab.set_default_index(
+            vocab["N" * config.k_mer]
+        )  # <UNK> and <CLS> do not exist anymore
     else:
         kmer_iter = (["".join(kmer)] for kmer in product("ACGT", repeat=config.k_mer))
         if config.from_paper:
-            vocab = build_vocab_from_iterator(kmer_iter, specials=["<MASK>", "<CLS>", "<UNK>"])
+            vocab = build_vocab_from_iterator(
+                kmer_iter, specials=["<MASK>", "<CLS>", "<UNK>"]
+            )
         else:
             vocab = build_vocab_from_iterator(kmer_iter, specials=["<MASK>", "<UNK>"])
         vocab.set_default_index(vocab["<UNK>"])  # <UNK> is necessary in the hard case
 
-    tokenizer = KmerTokenizer(config.k_mer, vocab, stride=config.k_mer, padding=True, max_len=config.max_len)
+    tokenizer = KmerTokenizer(
+        config.k_mer, vocab, stride=config.k_mer, padding=True, max_len=config.max_len
+    )
 
     if os.path.isdir(config.input):
         print("Computing the embeddings for all files in the directory ... \n\n")
@@ -129,7 +147,9 @@ def run(config):
             out_fname = f'{os.path.join("embeddings", prefix)}.pickle'
 
             if os.path.exists(out_fname):
-                print(f"Skipping {file}, it seems that we have computed the embeddings ... \n")
+                print(
+                    f"Skipping {file}, it seems that we have computed the embeddings ... \n"
+                )
             else:
                 embeddings = inference_on_file(filename, model, tokenizer)
                 # Save Embeddings
@@ -144,7 +164,9 @@ def run(config):
         out_fname = f'{os.path.join("embeddings", prefix)}.pickle'
 
         if os.path.exists(out_fname):
-            print(f"Skipping {file}, it seems that we have computed the embeddings ... \n")
+            print(
+                f"Skipping {file}, it seems that we have computed the embeddings ... \n"
+            )
         else:
 
             embeddings = inference_on_file(config.input, model, tokenizer)
@@ -156,7 +178,9 @@ def run(config):
     hour = dt // 3600
     minutes = (dt - (3600 * hour)) // 60
     seconds = dt - (hour * 3600) - (minutes * 60)
-    print(f"The code finished after: {int(hour)}:{int(minutes):02d}:{seconds:02.0f} (hh:mm:ss)\n")
+    print(
+        f"The code finished after: {int(hour)}:{int(minutes):02d}:{seconds:02.0f} (hh:mm:ss)\n"
+    )
     timing_stats["overall"] = time.time() - t_start
 
     print("Timing Stats")

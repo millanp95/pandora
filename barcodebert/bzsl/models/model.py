@@ -79,20 +79,32 @@ def get_dnabert_encoder(tokenizer, max_len: int, k: int = 6):
 
         if isinstance(preprocessed, list):
             return [
-                tokenizer.encode_plus(x, max_length=max_len, add_special_tokens=True, pad_to_max_length=True)[
-                    "input_ids"
-                ]
+                tokenizer.encode_plus(
+                    x,
+                    max_length=max_len,
+                    add_special_tokens=True,
+                    pad_to_max_length=True,
+                )["input_ids"]
                 for x in preprocessed
             ]
         else:
             return tokenizer.encode_plus(
-                preprocessed, max_length=max_len, add_special_tokens=True, pad_to_max_length=True
+                preprocessed,
+                max_length=max_len,
+                add_special_tokens=True,
+                pad_to_max_length=True,
             )["input_ids"]
 
     return dnabert_encoder
 
 
-def load_model(args, *, k: int = 6, classification_head: bool = False, num_classes: Optional[int] = None):
+def load_model(
+    args,
+    *,
+    k: int = 6,
+    classification_head: bool = False,
+    num_classes: Optional[int] = None,
+):
     kmer_iter = (["".join(kmer)] for kmer in product("ACGT", repeat=k))
     vocab = build_vocab_from_iterator(kmer_iter, specials=["<MASK>", "<CLS>", "<UNK>"])
     vocab.set_default_index(vocab["<UNK>"])
@@ -121,7 +133,9 @@ def load_model(args, *, k: int = 6, classification_head: bool = False, num_class
         tokenizer = DNATokenizer.from_pretrained(args.checkpoint, do_lower_case=False)
         sequence_pipeline = get_dnabert_encoder(tokenizer, max_len, k)
 
-        model = BertForMaskedLM.from_pretrained(pretrained_model_name_or_path=args.checkpoint, config=configuration)
+        model = BertForMaskedLM.from_pretrained(
+            pretrained_model_name_or_path=args.checkpoint, config=configuration
+        )
 
     elif args.model == "dnabert2":
         checkpoint = args.checkpoint if args.checkpoint else "zhihan1996/DNABERT-2-117M"
@@ -136,7 +150,9 @@ def load_model(args, *, k: int = 6, classification_head: bool = False, num_class
         raise ValueError(f"Could not parse model name: {args.model}")
 
     if classification_head:
-        model = FinetuneBert(out_feature=num_classes, bert_model=model, model_type=args.model)
+        model = FinetuneBert(
+            out_feature=num_classes, bert_model=model, model_type=args.model
+        )
 
     model.to(device)
 

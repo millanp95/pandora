@@ -19,7 +19,8 @@ from transformers.modeling_outputs import TokenClassifierOutput
 from barcodebert import utils
 from barcodebert.datasets import DNADataset
 from barcodebert.evaluation import evaluate
-from barcodebert.io import get_project_root, load_pretrained_model, safe_save_model
+from barcodebert.io import (get_project_root, load_pretrained_model,
+                            safe_save_model)
 
 BASE_BATCH_SIZE = 64
 
@@ -42,7 +43,9 @@ class ClassificationModel(nn.Module):
         loss = None
         if labels is not None:
             loss = F.cross_entropy(logits.view(-1, self.num_labels), labels.view(-1))
-        return TokenClassifierOutput(loss=loss, logits=logits, hidden_states=outputs.hidden_states)
+        return TokenClassifierOutput(
+            loss=loss, logits=logits, hidden_states=outputs.hidden_states
+        )
 
 
 def run(config):
@@ -62,7 +65,9 @@ def run(config):
         utils.set_rng_seeds_fixed(config.seed)
 
     if config.deterministic:
-        print("Running in deterministic cuDNN mode. Performance may be slower, but more reproducible.")
+        print(
+            "Running in deterministic cuDNN mode. Performance may be slower, but more reproducible."
+        )
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
@@ -106,7 +111,9 @@ def run(config):
     print()
     print(config)
     print()
-    print(f"Found {torch.cuda.device_count()} GPUs and {utils.get_num_cpu_available()} CPUs.")
+    print(
+        f"Found {torch.cuda.device_count()} GPUs and {utils.get_num_cpu_available()} CPUs."
+    )
 
     # Check which device to use
     use_cuda = not config.no_cuda and torch.cuda.is_available()
@@ -134,7 +141,9 @@ def run(config):
         # Looks like we're trying to resume from the checkpoint that this job
         # will itself create. Let's assume this is to let the job resume upon
         # preemption, and it just hasn't been preempted yet.
-        print(f"Skipping premature resumption from preemption: no checkpoint file found at '{config.checkpoint_path}'")
+        print(
+            f"Skipping premature resumption from preemption: no checkpoint file found at '{config.checkpoint_path}'"
+        )
     else:
         print(f"Loading resumption checkpoint '{config.checkpoint_path}'", flush=True)
         # Map model parameters to be load to the specified gpu.
@@ -153,7 +162,9 @@ def run(config):
 
     # LOAD PRE-TRAINED CHECKPOINT =============================================
     # Map model parameters to be load to the specified gpu.
-    pre_model, pre_checkpoint = load_pretrained_model(config.pretrained_checkpoint_path, device=device)
+    pre_model, pre_checkpoint = load_pretrained_model(
+        config.pretrained_checkpoint_path, device=device
+    )
     # Override the classifier with an identity function as we only want the embeddings
     pre_model.classifier = nn.Identity()
 
@@ -167,9 +178,15 @@ def run(config):
         "n_heads",
         "dataset_name",
     ]
-    default_kwargs = vars(get_parser().parse_args(["--pretrained_checkpoint=dummy.pt", "--dataset=foo_bar"]))
+    default_kwargs = vars(
+        get_parser().parse_args(
+            ["--pretrained_checkpoint=dummy.pt", "--dataset=foo_bar"]
+        )
+    )
     for key in keys_to_reuse:
-        if not hasattr(config, key) or getattr(config, key) == getattr(pre_checkpoint["config"], key):
+        if not hasattr(config, key) or getattr(config, key) == getattr(
+            pre_checkpoint["config"], key
+        ):
             pass
         elif getattr(config, key) == default_kwargs[key]:
             print(
@@ -252,9 +269,13 @@ def run(config):
             drop_last=False,
         )
         dl_train_kwargs["shuffle"] = None
-        dl_val_kwargs["sampler"] = DistributedSampler(dataset_val, shuffle=False, drop_last=False)
+        dl_val_kwargs["sampler"] = DistributedSampler(
+            dataset_val, shuffle=False, drop_last=False
+        )
         dl_val_kwargs["shuffle"] = None
-        dl_test_kwargs["sampler"] = DistributedSampler(dataset_test, shuffle=False, drop_last=False)
+        dl_test_kwargs["sampler"] = DistributedSampler(
+            dataset_test, shuffle=False, drop_last=False
+        )
         dl_test_kwargs["shuffle"] = None
 
     dataloader_train = torch.utils.data.DataLoader(dataset_train, **dl_train_kwargs)
@@ -309,7 +330,9 @@ def run(config):
     else:
         params = model.parameters()
     # Fetch the constructor of the appropriate optimizer from torch.optim
-    optimizer = getattr(torch.optim, config.optimizer)(params, lr=config.lr, weight_decay=config.weight_decay)
+    optimizer = getattr(torch.optim, config.optimizer)(
+        params, lr=config.lr, weight_decay=config.weight_decay
+    )
 
     # Scheduler ---------------------------------------------------------------
     # Set up the learning rate scheduler
@@ -353,7 +376,9 @@ def run(config):
             group=config.pretrained_run_id,
             entity=config.wandb_entity,
             project=config.wandb_project,
-            config=wandb.helper.parse_config(config, exclude=EXCLUDED_WANDB_CONFIG_KEYS),
+            config=wandb.helper.parse_config(
+                config, exclude=EXCLUDED_WANDB_CONFIG_KEYS
+            ),
             job_type=job_type,
             tags=["evaluate", job_type],
         )
@@ -378,9 +403,13 @@ def run(config):
             config.dataset_name,
             f"{config.run_name}__{config.run_id}",
         )
-        config.checkpoint_path = os.path.join(config.model_output_dir, "checkpoint_finetune.pt")
+        config.checkpoint_path = os.path.join(
+            config.model_output_dir, "checkpoint_finetune.pt"
+        )
         if config.log_wandb and config.global_rank == 0:
-            wandb.config.update({"checkpoint_path": config.checkpoint_path}, allow_val_change=True)
+            wandb.config.update(
+                {"checkpoint_path": config.checkpoint_path}, allow_val_change=True
+            )
 
     if config.checkpoint_path is None:
         print("Model will not be saved.")
@@ -442,12 +471,18 @@ def run(config):
             # reproducible if it is rerun with the same number of GPUs (and the same
             # number of CPU workers for the dataloader).
             utils.set_rng_seeds_fixed(epoch_seed + config.global_rank, all_gpu=False)
-            if isinstance(getattr(dataloader_train, "generator", None), torch.Generator):
+            if isinstance(
+                getattr(dataloader_train, "generator", None), torch.Generator
+            ):
                 # Finesse the dataloader's RNG state, if it is not using the global state.
                 dataloader_train.generator.manual_seed(epoch_seed + config.global_rank)
-            if isinstance(getattr(dataloader_train.sampler, "generator", None), torch.Generator):
+            if isinstance(
+                getattr(dataloader_train.sampler, "generator", None), torch.Generator
+            ):
                 # Finesse the sampler's RNG state, if it is not using the global RNG state.
-                dataloader_train.sampler.generator.manual_seed(config.seed + epoch + 10000 * config.global_rank)
+                dataloader_train.sampler.generator.manual_seed(
+                    config.seed + epoch + 10000 * config.global_rank
+                )
 
         if hasattr(dataloader_train.sampler, "set_epoch"):
             # Handling for DistributedSampler.
@@ -529,7 +564,9 @@ def run(config):
 
         # Save model ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         t_start_save = time.time()
-        if config.model_output_dir and (not config.distributed or config.global_rank == 0):
+        if config.model_output_dir and (
+            not config.distributed or config.global_rank == 0
+        ):
             safe_save_model(
                 {
                     "model": model,
@@ -545,7 +582,9 @@ def run(config):
                 **best_stats,
             )
             if config.save_best_model and best_stats["best_epoch"] == epoch:
-                ckpt_path_best = os.path.join(config.model_output_dir, "best_finetune.pt")
+                ckpt_path_best = os.path.join(
+                    config.model_output_dir, "best_finetune.pt"
+                )
                 print(f"Copying model to {ckpt_path_best}")
                 shutil.copyfile(config.checkpoint_path, ckpt_path_best)
 
@@ -566,9 +605,18 @@ def run(config):
                     "Training/stepwise/epoch_progress": epoch,
                     "Training/stepwise/n_samples_seen": n_samples_seen,
                     "Training/epochwise/epoch": epoch,
-                    **{f"Training/epochwise/Train/{k}": v for k, v in train_stats.items()},
-                    **{f"Training/epochwise/{eval_set}/{k}": v for k, v in eval_stats.items()},
-                    **{f"Training/epochwise/duration/{k}": v for k, v in timing_stats.items()},
+                    **{
+                        f"Training/epochwise/Train/{k}": v
+                        for k, v in train_stats.items()
+                    },
+                    **{
+                        f"Training/epochwise/{eval_set}/{k}": v
+                        for k, v in eval_stats.items()
+                    },
+                    **{
+                        f"Training/epochwise/duration/{k}": v
+                        for k, v in timing_stats.items()
+                    },
                 },
                 step=total_step,
             )
@@ -602,7 +650,9 @@ def run(config):
     )
     # Send stats to wandb
     if config.log_wandb and config.global_rank == 0:
-        wandb.log({**{f"Eval/Test/{k}": v for k, v in eval_stats.items()}}, step=total_step)
+        wandb.log(
+            {**{f"Eval/Test/{k}": v for k, v in eval_stats.items()}}, step=total_step
+        )
 
     if distinct_val_test:
         # Evaluate on validation set
@@ -623,7 +673,10 @@ def run(config):
 
     # Create a copy of the train partition with evaluation transforms
     # and a dataloader using the evaluation configuration (don't drop last)
-    print("\nEvaluating final model on train set under test conditions (no augmentation, dropout, etc)...", flush=True)
+    print(
+        "\nEvaluating final model on train set under test conditions (no augmentation, dropout, etc)...",
+        flush=True,
+    )
     dataset_train_eval = dataset_train
     dataset_train_eval.randomize_offset = False
     dl_train_eval_kwargs = copy.deepcopy(dl_test_kwargs)
@@ -635,7 +688,9 @@ def run(config):
             drop_last=False,
         )
         dl_train_eval_kwargs["shuffle"] = None
-    dataloader_train_eval = torch.utils.data.DataLoader(dataset_train_eval, **dl_train_eval_kwargs)
+    dataloader_train_eval = torch.utils.data.DataLoader(
+        dataset_train_eval, **dl_train_eval_kwargs
+    )
     eval_stats = evaluate(
         dataloader=dataloader_train_eval,
         model=model,
@@ -645,7 +700,9 @@ def run(config):
     )
     # Send stats to wandb
     if config.log_wandb and config.global_rank == 0:
-        wandb.log({**{f"Eval/Train/{k}": v for k, v in eval_stats.items()}}, step=total_step)
+        wandb.log(
+            {**{f"Eval/Train/{k}": v for k, v in eval_stats.items()}}, step=total_step
+        )
 
 
 def train_one_epoch(
@@ -806,9 +863,14 @@ def train_one_epoch(
             acc_epoch += acc
 
         # Log to console
-        if batch_idx <= 2 or batch_idx % config.print_interval == 0 or batch_idx >= len(dataloader) - 1:
+        if (
+            batch_idx <= 2
+            or batch_idx % config.print_interval == 0
+            or batch_idx >= len(dataloader) - 1
+        ):
             print(
-                f"Train Epoch:{epoch:3d}" + (f"/{n_epoch}" if n_epoch is not None else ""),
+                f"Train Epoch:{epoch:3d}"
+                + (f"/{n_epoch}" if n_epoch is not None else ""),
                 " Step:{:6d}/{}".format(batch_idx + 1, len(dataloader)),
                 " Loss:{:8.5f}".format(loss_batch),
                 " Acc:{:6.2f}%".format(acc),
@@ -817,7 +879,11 @@ def train_one_epoch(
             )
 
         # Log to wandb
-        if config.log_wandb and config.global_rank == 0 and batch_idx % config.log_interval == 0:
+        if (
+            config.log_wandb
+            and config.global_rank == 0
+            and batch_idx % config.log_interval == 0
+        ):
             # Create a log dictionary to send to wandb
             # Epoch progress interpolates smoothly between epochs
             epoch_progress = epoch - 1 + (batch_idx + 1) / len(dataloader)
@@ -849,15 +915,29 @@ def train_one_epoch(
             # Record how long it took to do each step in the pipeline
             if t_start_wandb is not None:
                 # Record how long it took to send to wandb last time
-                log_dict["Training/stepwise/duration/wandb"] = t_end_wandb - t_start_wandb
-            log_dict["Training/stepwise/duration/dataloader"] = t_start_batch - t_end_batch
-            log_dict["Training/stepwise/duration/preamble"] = t_start_forward - t_start_batch
-            log_dict["Training/stepwise/duration/forward"] = ct_forward.elapsed_time(ct_backward) / 1000
-            log_dict["Training/stepwise/duration/backward"] = ct_backward.elapsed_time(ct_optimizer) / 1000
-            log_dict["Training/stepwise/duration/optimizer"] = ct_optimizer.elapsed_time(ct_logging) / 1000
+                log_dict["Training/stepwise/duration/wandb"] = (
+                    t_end_wandb - t_start_wandb
+                )
+            log_dict["Training/stepwise/duration/dataloader"] = (
+                t_start_batch - t_end_batch
+            )
+            log_dict["Training/stepwise/duration/preamble"] = (
+                t_start_forward - t_start_batch
+            )
+            log_dict["Training/stepwise/duration/forward"] = (
+                ct_forward.elapsed_time(ct_backward) / 1000
+            )
+            log_dict["Training/stepwise/duration/backward"] = (
+                ct_backward.elapsed_time(ct_optimizer) / 1000
+            )
+            log_dict["Training/stepwise/duration/optimizer"] = (
+                ct_optimizer.elapsed_time(ct_logging) / 1000
+            )
             log_dict["Training/stepwise/duration/overall"] = time.time() - t_end_batch
             t_start_wandb = time.time()
-            log_dict["Training/stepwise/duration/logging"] = t_start_wandb - t_start_logging
+            log_dict["Training/stepwise/duration/logging"] = (
+                t_start_wandb - t_start_logging
+            )
             # Send to wandb
             wandb.log(log_dict, step=total_step)
             t_end_wandb = time.time()

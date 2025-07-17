@@ -3,7 +3,14 @@ import torch.nn as nn
 
 
 class FinetuneBert(nn.Module):
-    def __init__(self, out_feature, bert_model, dim=768, embedding_dim=768, model_type: str = "bioscanbert"):
+    def __init__(
+        self,
+        out_feature,
+        bert_model,
+        dim=768,
+        embedding_dim=768,
+        model_type: str = "bioscanbert",
+    ):
         super().__init__()
 
         self.bert_model = bert_model

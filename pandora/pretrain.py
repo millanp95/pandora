@@ -13,18 +13,22 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.optim
+from knn_probe import run_knn
 from omegaconf import OmegaConf
 from torch import nn
 from torch.distributed import destroy_process_group, init_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 
-from knn_probe import run_knn
 from src.datasets import HDF5MaskedDataset, MaskedOneHotDataset, data_from_df
 from src.models import CNN_MLM
-from src.utils import (check_is_distributed, get_num_cpu_available,
-                       load_pretrained_model, safe_save_model,
-                       setup_slurm_distributed)
+from src.utils import (
+    check_is_distributed,
+    get_num_cpu_available,
+    load_pretrained_model,
+    safe_save_model,
+    setup_slurm_distributed,
+)
 
 BASE_BATCH_SIZE = 64
 
