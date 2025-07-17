@@ -18,7 +18,8 @@ from barcodebert.datasets import BPETokenizer, KmerTokenizer, representations_fr
 from barcodebert.io import load_pretrained_model
 
 
-def run(config):
+ 
+def run_knn(config):
     r"""
     Run kNN job, using a single GPU worker to create the embeddings.
 
@@ -317,7 +318,7 @@ def cli():
     if config.disable_wandb:
         config.log_wandb = False
     del config.disable_wandb
-    return run(config)
+    return run_knn(config)
 
 
 if __name__ == "__main__":

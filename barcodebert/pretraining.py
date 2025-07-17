@@ -18,6 +18,7 @@ from transformers import BertConfig, BertForTokenClassification
 from barcodebert import utils
 from barcodebert.datasets import DNADataset
 from barcodebert.io import get_project_root, safe_save_model
+from barcodebert.knn_probing import run_knn
 
 BASE_BATCH_SIZE = 64
 
@@ -385,6 +386,40 @@ def run(config):
     # Ensure modules are on the correct device
     model = model.to(device)
 
+    # KNN Configuration =======================================================
+    # Create configuration for kNN evaluation similar to pandora/pretrain.py
+    import argparse
+    knn_config = argparse.Namespace()
+    knn_config.pretrained_checkpoint_path = config.checkpoint_path
+    knn_config.data_dir = config.data_dir
+    knn_config.dataset_name = config.dataset_name
+    knn_config.taxon = getattr(config, 'knn_taxon', 'genus')  # Use configurable taxonomic level
+    knn_config.n_neighbors = 1
+    knn_config.metric = "cosine"
+    
+    # Copy relevant parameters from the main config
+    knn_config.k_mer = config.k_mer
+    knn_config.stride = config.stride
+    knn_config.max_len = config.max_len
+    knn_config.tokenizer = config.tokenizer
+    knn_config.bpe_path = getattr(config, 'bpe_path', None)
+    knn_config.tokenize_n_nucleotide = config.tokenize_n_nucleotide
+    knn_config.predict_n_nucleotide = getattr(config, 'predict_n_nucleotide', False)
+    knn_config.pretrain_levenshtein = getattr(config, 'pretrain_levenshtein', False)
+    knn_config.levenshtein_vectorized = getattr(config, 'levenshtein_vectorized', False)
+    knn_config.n_layers = getattr(config, 'n_layers', 12)
+    knn_config.n_heads = getattr(config, 'n_heads', 12)
+    
+    # Logging configuration
+    knn_config.log_wandb = config.log_wandb and config.global_rank == 0
+    knn_config.wandb_entity = getattr(config, 'wandb_entity', None)
+    knn_config.wandb_project = getattr(config, 'wandb_project', None)
+    knn_config.run_name = getattr(config, 'run_name', None)
+    knn_config.run_id = getattr(config, 'run_id', None)
+    knn_config.seed = config.seed
+    knn_config.deterministic = getattr(config, 'deterministic', False)
+    knn_config.disable_wandb = False
+
     timing_stats = {}
     t_end_epoch = time.time()
     for epoch in range(start_epoch, config.epochs + 1):
@@ -524,6 +559,18 @@ def run(config):
 
         t_end_save = time.time()
         timing_stats["saving"] = t_end_save - t_start_save
+
+        # kNN Evaluation ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Run kNN evaluation periodically (similar to pandora/pretrain.py)
+        knn_freq = getattr(config, 'knn_eval_frequency', 5)
+        if config.global_rank == 0 and knn_freq > 0 and epoch % knn_freq == 1:
+            print("Running kNN evaluation...")
+            try:
+                # Update the checkpoint path for the current epoch
+                knn_config.pretrained_checkpoint_path = config.checkpoint_path
+                run_knn(knn_config)
+            except Exception as e:
+                print(f"kNN evaluation failed: {e}")
 
         # Log to wandb ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Overall time won't include uploading to wandb, but there's nothing
@@ -1267,6 +1314,23 @@ def get_parser():
         "--run-id",
         type=str,
         help="Unique identifier for the model run or job. Used as the run ID on wandb.",
+    )
+
+    # kNN Evaluation args -----------------------------------------------------
+    group = parser.add_argument_group("kNN evaluation")
+    group.add_argument(
+        "--knn-eval-frequency",
+        "--knn_eval_frequency",
+        type=int,
+        default=5,
+        help="Run kNN evaluation every N epochs. Set to 0 to disable. Default: %(default)s",
+    )
+    group.add_argument(
+        "--knn-taxon",
+        "--knn_taxon",
+        type=str,
+        default="genus",
+        help="Taxonomic level for kNN evaluation. Default: %(default)s",
     )
 
     return parser
