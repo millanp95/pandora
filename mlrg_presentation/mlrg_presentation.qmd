@@ -1,0 +1,458 @@
+---
+title: “Tips and Tricks” for pre-training DNA foundation models on an academic budget.
+subtitle: MLRG Talks & Brainstorms
+format: clean-revealjs
+html-math-method:
+  method: mathjax
+  url: "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+author:
+  - name: Pablo A. Millan Arias
+    orcid: 0000-0002-8886-9389
+    email: pmillana[at]uwaterloo[dot]ca
+    affiliations: University of Waterloo / Vector Institute 
+date: last-modified
+--- 
+
+## Outline
+::: {style="font-size:0.80em; line-height:1.1; margin:0 1em;"}
+1. Foundation models in genomics
+    - [Some examples]{.scriptsize}
+    - [Different pre-training strategies]{.scriptsize}
+    - [BarcodeBERT]{.scriptsize}
+2. Motivation
+3. Computational Optimizations
+    - [Mixed precission computation]{.scriptsize}
+    - [`xFormers` library]{.scriptsize}
+4. Architectural Optimizations
+    - [CNN-based tokenization (AlphaGenome)]{.scriptsize}
+    - [Jumbo CLS and registers]{.scriptsize}
+    - [Alternative Positional Ecodings]{.scriptsize}
+5. Preliminary Results 
+6. Conclusion and Future Work
+:::
+
+# Foundation models in genomics {background-color="#40666e"}
+
+## DNA foundation models
+A **foundation model** is any model that is trained on broad data that can be adapted to a wide range of downstream tasks [(_Bommasani et al., 2021_)]{.scriptsize}. 
+
+:::: {.columns}
+
+::: {.column width="50%"}
+
+- [Full understanding of DNA as a language is particularly hard because every genome is composed of several regions corresponding to different abstraction levels]{.small}
+- [Every cell has the same "set of instructions" but it differentiates into various cell types]{.small}
+:::
+
+::: {.column width="50%" style="text-align:center;"}
+![](_img/central_dogma.png){width="300%"}
+[*Source: Adapted from [Khan Academy](https://www.khanacademy.org/science/ap-biology/gene-expression-and-regulation/translation/a/intro-to-gene-expression-central-dogma).*]{.tiny}
+:::
+
+
+::::
+
+
+## Some examples
+![](_img/Evo_ideal_DNA_Language_Model.png){fig-align="center" fig-width="50%" fig-cap="Source: Adapted from (Nguyen et al., 2024)." fig-cap-location="bottom"}
+
+- Since only ~2% of the genome codes for proteins, several specialized models have been develped the DNA regions whose function is fully understood.
+- Optimal design choices may vary from one "domain" to another.
+- We will focus on the **DNA modality** for the rest of the talk.
+
+## Concrete examples {.scrollable}
+
+| Model                      | Pre-training Strategy                                                                      | Architecture                                                         | # Params.                                           | Pretraining Data                                          | Downstream Tasks                                                                            |
+| -------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| [**BarcodeBERT**][1]            | MLM                  | BERT-base (12 layers, 768 hidden, 12 heads)              | ∼110 M                                     | ∼1.5 M invertebrate DNA barcodes               | Species‐level classification, taxonomic assignment, k-NN, zero-shot clusering     |
+|   [**HyenaDNA**][3]             | Next-nucleotide prediction         | Decoder-only SSM - Hyena Architecture   | ∼1.6 M               | Human genome  | Regulatory element prediction, enhancer identification, species classification  |
+|   [**MambaDNA** ][5]             | Next-token prediction                | RC-equivariant state-space “MambaDNA” block              | N/A                                        | Human (or multi-species) genome              | Variant-effect prediction, reverse-complement tasks                           |
+|  [**BarcodeMamba** ][6]         | MLM / Next-nucleotide prediction  | Structured State-Space Model (Mamba-2)             | ∼9 M           | DNA barcodes                           | Species & genus classification (linear probe, 1-NN)                       |
+| **Nucleotide Transformer** | Masked LM / next-token prediction (50 M–2.5 B scale)                    | Transformer encoder (BERT-style)                        | 50 M‒2.5 B                                | Human (3,202 genomes) & 850 diverse species  | Molecular phenotype prediction, variant effect, enhancer classification        |
+| **Alpha Genome**            |  N/A | U-Net-style + Transformer backbone                     | N/A                                       | Human & mouse genomes                    | Gene regulation prediction, variant effect scoring                   |
+| **Evo**                    | Next-token prediction    | StripedHyena (hybrid conv + attention)       | ∼7 B                                        | Prokaryotic & phage genomes (\~300 B tokens)  | Functional annotation, phenotype prediction, generative sequence design |
+| [**MycoAI**][15]              | N/A            | BERT & CNN ensemble                                    |N/A                                    | Fungal ITS barcodes (UNITE)                 | Taxonomic classification at genus & species levels                        |
+|      [**JanusDNA** ][16]          | Hybrid autoregressive + MLM                             | Hybrid Mamba + Attention + MoE                         | (not specified; outperforms 250× larger) | Human & multi-species genomes                | Genomic representation benchmarks (binding, variant effect)                  |
+
+[1]: https://arxiv.org/abs/2311.02401?utm_source=chatgpt.com "BarcodeBERT: Transformers for Biodiversity Analysis"
+[2]: https://www.researchgate.net/figure/Two-groups-of-baselines-off-the-shelf-foundation-models-pretrained-on-human-genome_tbl1_387105343?utm_source=chatgpt.com "Two groups of baselines: off-the-shelf foundation models pretrained ..."
+[3]: https://arxiv.org/abs/2306.15794 "[2306.15794] HyenaDNA: Long-Range Genomic Sequence Modeling at Single Nucleotide Resolution"
+[4]: https://ar5iv.org/pdf/2306.15794 "[2306.15794] HyenaDNA: Long-Range Genomic Sequence Modeling at Single Nucleotide Resolution"
+[5]: https://arxiv.org/pdf/2403.03234?utm_source=chatgpt.com "[PDF] Bi-Directional Equivariant Long-Range DNA Sequence Modeling"
+[6]: https://openreview.net/pdf?id=6ohFEFTr10&utm_source=chatgpt.com "[PDF] BarcodeMamba: State Space Models for Biodiversity Analysis"
+[7]: https://www.nature.com/articles/s41592-024-02523-z?utm_source=chatgpt.com "Nucleotide Transformer: building and evaluating robust foundation ..."
+[8]: https://storage.googleapis.com/deepmind-media/papers/alphagenome.pdf?utm_source=chatgpt.com "[PDF] AlphaGenome: advancing regulatory variant effect prediction with a ..."
+[9]: https://www.medvolt.ai/blog/google-deepmind-alphagenome-dna-variant-effect-prediction-deepmind?utm_source=chatgpt.com "AlphaGenome: Google DeepMind's Breakthrough Model for ..."
+[10]: https://www.facebook.com/groups/DeepNetGroup/posts/2521479148244952/?utm_source=chatgpt.com "Google DeepMind Releases AlphaGenome: A Deep Learning ..."
+[11]: https://deepmind.google/discover/blog/alphagenome-ai-for-better-understanding-the-genome/?utm_source=chatgpt.com "AlphaGenome: AI for better understanding the genome"
+[12]: https://arcinstitute.org/tools/evo?utm_source=chatgpt.com "Evo 2: DNA Foundation Model | Arc Institute"
+[13]: https://pmc.ncbi.nlm.nih.gov/articles/PMC12057570/?utm_source=chatgpt.com "Sequence modeling and design from molecular to genome scale ..."
+[14]: https://www.together.ai/blog/evo?utm_source=chatgpt.com "Evo: Long-context modeling from molecular to genome scale"
+[15]: https://pubmed.ncbi.nlm.nih.gov/39152642/?utm_source=chatgpt.com "MycoAI: Fast and accurate taxonomic classification for fungal ITS ..."
+[16]: https://arxiv.org/abs/2505.17257 "[2505.17257] JanusDNA: A Powerful Bi-directional Hybrid DNA Foundation Model"
+
+
+## BarcodeBERT
+We developed a nice model 
+
+![](_img/BarcodeBERT_arch.png){fig-align="center" width=700,
+    height=300 fig-cap="Source: Adapted from (Nguyen et al., 2024)." fig-cap-location="bottom"}
+
+
+
+# Motivation {background-color="#40666e"}
+
+## The story of BarcodeMAE 
+
+# Computational Optimizations {background-color="#40666e"}
+
+## Mixed precission computation `APEX`
+
+## `xFormers` library
+
+# Architectural Optimizations {background-color="#40666e"}
+
+## CNN-based tokenization (AlphaGenome)
+
+## Jumbo CLS and registers
+
+## Alternative Positional Ecodings
+
+# Preliminary Results {background-color="#40666e"}
+
+## Preliminary Results
+|                     | Apex | xFormers | CNN | Jumbo CLS | Train FLOPs | Params | Hardware @ Training Time | kNN | ZSC |
+| ------------------- | ---- | -------- | --- | --------- | ----------- | ------ | ------------------------ | --- | --- |
+| BarcodeBERT-Pandora | ✖    | ✖        | ✔   | ✖         |             |        |                          |     |     |
+|                     | ✖    | ✖        | ✖   | ✔         |             |        |                          |     |     |
+|                     | ✔    | ✔        | ✖   | ✖         |             |        |                          |     |     |
+|                     | ✔    | ✔        | ✔   | ✖         |             |        |                          |     |     |
+|                     | ✔    | ✔        | ✔   | ✔         |             |        |                          |     |     |
+| BarcodeBERT         | ✖    | ✖        | ✖   | ✖         |             |        |                          |     |     |
+
+## Preliminary Results
+|                     | Pos. Enc. | Train FLOPs | Params | Hardware @ Training Time | kNN | ZSC |
+| ------------------- | --------- | ----------- | ------ | ------------------------ | --- | --- |
+| BarcodeBERT-Pandora | AliBi     |             |        |                          |     |     |
+|                     | RoPE      |             |        |                          |     |     |
+|                     | Sin/Cos   |             |        |                          |     |     |
+|                     | Learned   |             |        |                          |     |     |
+| BarcodeBERT         | AliBi     |             |        |                          |     |     |
+|                     | RoPE      |             |        |                          |     |     |
+|                     | Sin/Cos   |             |        |                          |     |     |
+|                     | Learned   |             |        |                          |     |     |
+
+
+## Conclusion and Future Work 
+
+- **Best recipe** (CNN + AMP + xFormers + ALiBi) → ~3× speedup, ≤1% drop in accuracy
+    
+- **Future work**:
+    
+    - Quantization & low-rank adapters
+    - Mixed-objective encoder–decoder
+    - DNABERT-2 Decoder
+
+
+## References
+
+1. **DNABERT-2**: Ji _et al._, _Bioinformatics_ (2023).
+    
+2. **BarcodeBERT**: Safari _et al._, _ISMB_ (2024).
+    
+3. **AlphaGenome**: DeepMind blog (2025).
+    
+4. **xFormers**: Facebook AI (2023).
+
+
+# Theme {background-color="#40666e"}
+
+## Example slide
+
+### This is a subtitle
+
+Here we have some text that may run over several lines of the slide frame,
+depending on how long it is.
+
+- first item 
+    - A sub item
+
+Next, we'll brief review some theme-specific components.
+
+- Note that _all_ of the standard Reveal.js
+[features](https://quarto.org/docs/presentations/revealjs/)
+can be used with this theme, even if we don't highlight them here.
+
+## Additional theme classes
+
+### Some extra things you can do with the clean theme
+
+Special classes for emphasis
+
+- `.alert` class for default emphasis, e.g. [important note]{.alert}.
+- `.fg` class for custom colour, e.g. [important note]{.fg style="--col: #e64173"}.
+- `.bg` class for custom background, e.g. [important note]{.bg style="--col: #e64173"}.
+
+Cross-references
+
+- `.button` class provides a Beamer-like button, e.g.
+[[Summary]{.button}](#sec-summary)
+
+
+
+
+# Components {background-color="#40666e"}
+
+## Want more?
+
+### See our longer demo slides
+
+We've deliberarely kept this template lean, to get you up and running as fast as
+possible.
+
+We provide a separate
+[demo template](https://github.com/grantmcdermott/quarto-revealjs-clean-demo),
+with more examples for integrating code, tables, figures, etc.
+
+  - See the live demo slides
+  [here](https://grantmcdermott.com/quarto-revealjs-clean-demo/template.html).
+
+## Summary {#sec-summary}
+
+### A minimalist and elegant presentation theme
+
+The Quarto reveal.js clean theme aims to be a minimalist and elegant presention
+theme. Here are some options to get you started:
+
+Add the theme to an existing project.
+
+```{.bash}
+quarto install extension grantmcdermott/quarto-revealjs-clean
+```
+
+... or, create a new project using this slide deck as a lean template.
+
+```{.bash}
+quarto use template grantmcdermott/quarto-revealjs-clean
+```
+
+... or, create a new project using the demo slide deck as a full template.
+
+```{.bash}
+quarto use template grantmcdermott/quarto-revealjs-clean-demo
+```
+
+
+# Abstract
+Motivated by advances in **efficient pretraining** for NLP and CV, I benchmark similar techniques in the domain of DNA barcode sequences.  
+In this talk we will:
+- Review key pretraining strategies for DNA transformers  
+- Introduce **AlphaGenome** (DeepMind) and its architectural novelties  
+- Present our implementation updates (mixed precision, xFormers)  
+- Propose three architectural modifications (CNN tokeniser, jumbo CLS, alternative PE)  
+- Share end-to-end benchmarks: throughput, FLOPs, downstream accuracy  
+
+---
+
+## 1. DNA Foundation Models & Pretraining Strategies
+
+1. **Masked Language Modeling (MLM)**  
+   - Randomly mask 15% of input k-mers  
+   - Objective:  
+     $$
+       \mathcal{L}_{\text{MLM}} = -\sum_{i\in \mathcal{M}} \log P(x_i \mid \mathbf{x}_{\setminus \mathcal{M}})
+     $$  
+   - Pros/cons for DNA (small alphabet, repetitive patterns)
+
+2. **Next-Nucleotide Prediction (Autoregressive)**  
+   - Predict \(x_{t}\) given \(\{x_{<t}\}\)  
+   - \(\mathcal{L}_{\text{AR}} = -\sum_{t} \log P(x_t\mid x_{<t})\)
+
+3. **Encoder–Decoder Reconstruction**  
+   - Mask-and-reconstruct one nucleotide at a time  
+   - Sequence-to-sequence loss  
+
+4. **Contrastive & Span-Prediction**  
+   - Contrast positive/negative k-mer windows  
+   - Span corruption → reconstruct spans  
+
+---
+
+## 2. AlphaGenome (DeepMind) hello
+
+- **Architecture**  
+  - 24-layer transformer, \(d_{\text{model}}=1024\), 16 heads  
+  - Sparse attention patterns for up to 65k tokens  
+
+- **Pretraining**  
+  - Hybrid MLM + span prediction  
+  - Trained on 1 Gb raw genomic fragments  
+
+- **Key Innovations**  
+  - **Long-Context Sparse Attention** (sliding window + global tokens)  
+  - **Adaptive Span**: learnable attention span per head  
+  - **Per-Residue Loss Masking**: down-weight low-complexity regions  
+
+---
+
+## 3. Implementation Updates
+
+### 3.1 Mixed Precision (AMP)
+- **Why?**  Half-precision (FP16) reduces memory footprint by ~50%, doubles tensor throughput.  
+- **How?**  NVIDIA Apex AMP or native `torch.cuda.amp`.  
+- **Mechanism**  
+  1. Forward pass in FP16  
+  2. Loss scaled by \(\alpha\) to avoid underflow  
+  3. Backward pass in FP16, unscale gradients  
+  4. Cast master weights in FP32  
+- **Our Setup**  
+  ```python
+  from torch.cuda.amp import autocast, GradScaler
+
+  scaler = GradScaler()
+  with autocast():
+      loss = model(inputs).loss
+  scaler.scale(loss).backward()
+  scaler.step(optimizer)
+  scaler.update()
+  ```
+
+---
+
+## 3.2 xFormers Library
+
+- **Why?** Custom CUDA kernels for attention → up to 1.5× speedup, lower memory.
+    
+- **What:** Fused softmax + matmuls, flash attention fallback
+    
+- **Integration Challenges**
+    
+    - PyTorch 2.0 compatibility
+        
+    - Mixing xFormers ops with standard layers
+        
+    - Handling sequence-length dynamic shapes
+        
+- **Snippet**
+    
+    ```python
+    import xformers.ops as xops
+    attn_output = xops.memory_efficient_attention(q, k, v)
+    ```
+    
+---
+
+## 4. Architectural Changes
+
+### 4.1 CNN-Based Tokeniser
+
+- **Why?** Remove discrete k-mer vocabulary; learn features continuously.
+    
+- **How?**
+    
+    - 1D conv stack over one-hot DNA (A,C,G,T)
+        
+    - Output: continuous “token” vectors ∈Rdmodel\in \mathbb{R}^{d_{\text{model}}}
+        
+- **Implementation**
+    
+    ```python
+    class CNNTokenizer(nn.Module):
+        def __init__(self, d_model):
+            super().__init__()
+            self.conv = nn.Sequential(
+                nn.Conv1d(4, d_model, kernel_size=7, padding=3),
+                nn.GELU(),
+                nn.Conv1d(d_model, d_model, kernel_size=5, padding=2)
+            )
+        def forward(self, x):  # x: (B, L, 4)
+            return self.conv(x.transpose(1,2)).transpose(1,2)
+    ```
+    
+- **Challenges**
+    
+    - Aligning variable sequence lengths
+        
+    - Preserving positional granularity
+        
+
+---
+
+### 4.2 Jumbo CLS Token
+
+- **Why?** Enrich global summary capacity.
+    
+- **How?**
+    
+    - Replace single CLS embedding c∈Rd\mathbf{c}\in\mathbb{R}^{d} with C∈Rk×d\mathbf{C}\in\mathbb{R}^{k\times d} (e.g. k=4k=4).
+        
+    - Concatenate to input; attend normally.
+        
+- **Effect**
+    
+    - +15 % global feature throughput
+        
+    - Slight 5 % increase in param count
+        
+
+---
+
+### 4.3 Alternative Positional Encodings
+
+#### ALiBi
+
+- **Bias** ∝\propto distance between query/key
+    
+- No learned parameters; supports arbitrary lengths
+    
+
+#### Rotary (RoPE)
+
+- **Complex rotation** in each head:
+
+q′,k′=Rot(q,θ), Rot(k,θ) \mathbf{q}',\mathbf{k}' = \mathrm{Rot}(\mathbf{q},\theta),\ \mathrm{Rot}(\mathbf{k},\theta)
+
+#### Sinusoidal
+
+- Classic:  
+$$
+PE(pos,2i)=sin⁡(pos100002i/d)\text{PE}_{(pos,2i)} = \sin\bigl(\tfrac{pos}{10000^{2i/d}}\bigr)$$$$PE(pos,2i+1)=cos⁡(… )\text{PE}_{(pos,2i+1)} = \cos(\dots)$$
+
+
+---
+
+## 5. Results
+
+## Results
+
+
+|                     | Apex | xFormers | CNN | Jumbo CLS | Train FLOPs | Params | Hardware @ Training Time | kNN | ZSC |
+| ------------------- | ---- | -------- | --- | --------- | ----------- | ------ | ------------------------ | --- | --- |
+| BarcodeBERT-Pandora | ✖    | ✖        | ✔   | ✖         |             |        |                          |     |     |
+|                     | ✖    | ✖        | ✖   | ✔         |             |        |                          |     |     |
+|                     | ✔    | ✔        | ✖   | ✖         |             |        |                          |     |     |
+|                     | ✔    | ✔        | ✔   | ✖         |             |        |                          |     |     |
+|                     | ✔    | ✔        | ✔   | ✔         |             |        |                          |     |     |
+| BarcodeBERT         | ✖    | ✖        | ✖   | ✖         |             |        |                          |     |     |
+
+
+|                     | Pos. Enc. | Train FLOPs | Params | Hardware @ Training Time | kNN | ZSC |
+| ------------------- | --------- | ----------- | ------ | ------------------------ | --- | --- |
+| BarcodeBERT-Pandora | AliBi     |             |        |                          |     |     |
+|                     | RoPE      |             |        |                          |     |     |
+|                     | Sin/Cos   |             |        |                          |     |     |
+|                     | Learned   |             |        |                          |     |     |
+| BarcodeBERT         | AliBi     |             |        |                          |     |     |
+|                     | RoPE      |             |        |                          |     |     |
+|                     | Sin/Cos   |             |        |                          |     |     |
+|                     | Learned   |             |        |                          |     |     |
+
+
+---
+
+### 6. Conclusions & Next Steps
+
+
+---
+
+   
