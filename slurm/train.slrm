@@ -2,7 +2,7 @@
 #SBATCH --partition=t4v1,t4v2       # Which node partitions to use. Use a comma-separated list if you don't mind which partition: t4v1,t4v2,rtx6000,a40
 #SBATCH --nodes=1                   # Number of nodes to request. Can increase to --nodes=2, etc, for more GPUs (spread out over different nodes).
 #SBATCH --tasks-per-node=1          # Number of processes to spawn per node. Should always be set to 1, regardless of number of GPUs!
-#SBATCH --gres=gpu:1                # Number of GPUs per node. Can increase to --gres=gpu:2, etc, for more GPUs (together on the same node).
+#SBATCH --gres=gpu:4                # Number of GPUs per node. Can increase to --gres=gpu:2, etc, for more GPUs (together on the same node).
 #SBATCH --cpus-per-gpu=4            # Number of CPUs per GPU. Soft maximum of 4 per GPU requested on t4, 8 otherwise. Hard maximum of 32 per node.
 #SBATCH --mem-per-gpu=10G           # RAM per GPU. Soft maximum of 20G per GPU requested on t4v2, 41G otherwise. Hard maximum of 167G per node.
 #SBATCH --time=08:00:00             # You must specify a maximum run-time if you want to run for more than 2h
@@ -123,12 +123,14 @@ echo ""
 # Vector provides a fast parallel filesystem local to the GPU nodes, dedicated
 # for checkpointing. It is mounted under /checkpoint. It is strongly
 # recommended that you keep your intermediary checkpoints under this directory
-CKPT_DIR="/checkpoint/${SLURM_JOB_USER}/${SLURM_JOB_ID}"
+# CKPT_DIR="/checkpoint/${SLURM_JOB_USER}/${SLURM_JOB_ID}"
+CKPT_DIR="/scratch/ssd004/scratch/${SLURM_JOB_USER}/checkpoints/${SLURM_JOB_ID}"
 echo "CKPT_DIR = $CKPT_DIR"
 CKPT_PTH="$CKPT_DIR/$CKPT_BASENAME"
 echo "CKPT_PTH = $CKPT_PTH"
 echo ""
 # Ensure the checkpoint dir exists
+# [ -d "$CKPT_DIR" ] || exit 1
 mkdir -p "$CKPT_DIR"
 echo "Current contents of ${CKPT_DIR}:"
 ls -lh "${CKPT_DIR}"
@@ -269,8 +271,9 @@ srun -N "$SLURM_NNODES" --ntasks-per-node=1 \
     --seed="$SEED" \
     --checkpoint="$CKPT_PTH" \
     --log-wandb \
+    --data_dir=/scratch/ssd004/scratch/pmillana/CANADA_1.5M/data/ \
     --run-name="$SLURM_JOB_NAME" \
-    --run-id="$JOB_ID" \
+    --run-id="pretrain_$JOB_ID" \
     "${@}" &
 child="$!"
 wait "$child"

@@ -305,6 +305,14 @@ def run(config):
             job_type="pretrain",
             tags=["pretrain"],
         )
+        # Extra tags for Pandora
+        wandb.config.update({
+        "apex":     False,
+        "xformers": False,
+        "cnn":      False,
+        "jumbo_cls":False,
+        "pos_enc":  "Learned",
+        })
         # If a run_id was not supplied at the command prompt, wandb will
         # generate a name. Let's use that as the run_name.
         if config.run_name is None:
@@ -368,7 +376,12 @@ def run(config):
     print()
     print(config, flush=True)
     print()
-
+    
+    # Save the number of trainable parameters for logging
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    if config.log_wandb and config.global_rank == 0:
+        wandb.log({"params": trainable_params})
+    
     # Ensure modules are on the correct device
     model = model.to(device)
 
