@@ -40,9 +40,7 @@ def run(config):
         utils.set_rng_seeds_fixed(config.seed)
 
     if config.deterministic:
-        print(
-            "Running in deterministic cuDNN mode. Performance may be slower, but more reproducible."
-        )
+        print("Running in deterministic cuDNN mode. Performance may be slower, but more reproducible.")
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
@@ -87,9 +85,7 @@ def run(config):
     print()
     print(config)
     print()
-    print(
-        f"Found {torch.cuda.device_count()} GPUs and {utils.get_num_cpu_available()} CPUs."
-    )
+    print(f"Found {torch.cuda.device_count()} GPUs and {utils.get_num_cpu_available()} CPUs.")
 
     # Check which device to use
     use_cuda = not config.no_cuda and torch.cuda.is_available()
@@ -117,9 +113,7 @@ def run(config):
         # Looks like we're trying to resume from the checkpoint that this job
         # will itself create. Let's assume this is to let the job resume upon
         # preemption, and it just hasn't been preempted yet.
-        print(
-            f"Skipping premature resumption from preemption: no checkpoint file found at '{config.checkpoint_path}'"
-        )
+        print(f"Skipping premature resumption from preemption: no checkpoint file found at '{config.checkpoint_path}'")
     else:
         print(f"Loading resumption checkpoint '{config.checkpoint_path}'", flush=True)
         # Map model parameters to be load to the specified gpu.
@@ -272,6 +266,16 @@ def run(config):
     # Set up loss function
     criterion = nn.CrossEntropyLoss()
 
+    # Mixed Precision ---------------------------------------------------------
+    # Set up automatic mixed precision training
+    scaler = None
+    if config.mixed_precision and use_cuda:
+        from torch.cuda.amp import GradScaler
+        scaler = GradScaler()
+        print("Mixed precision training enabled with GradScaler.")
+    elif config.mixed_precision:
+        print("Warning: Mixed precision requested but CUDA is not available. Running in full precision.")
+
     distance_table = None
 
     # Mask schedule -----------------------------------------------------------
@@ -308,22 +312,18 @@ def run(config):
             group=config.run_id,
             entity=config.wandb_entity,
             project=config.wandb_project,
-            config=wandb.helper.parse_config(
-                config, exclude=EXCLUDED_WANDB_CONFIG_KEYS
-            ),
+            config=wandb.helper.parse_config(config, exclude=EXCLUDED_WANDB_CONFIG_KEYS),
             job_type="pretrain",
             tags=["pretrain"],
         )
         # Extra tags for Pandora
-        wandb.config.update(
-            {
-                "apex": False,
-                "xformers": False,
-                "cnn": False,
-                "jumbo_cls": False,
-                "pos_enc": "Learned",
-            }
-        )
+        wandb.config.update({
+        "xformers": False,
+        "cnn":      False,
+        "jumbo_cls":False,
+        "pos_enc":  "Learned",
+        "apex": config.mixed_precision,
+        })
         # If a run_id was not supplied at the command prompt, wandb will
         # generate a name. Let's use that as the run_name.
         if config.run_name is None:
@@ -345,20 +345,14 @@ def run(config):
             config.dataset_name,
             f"{config.run_name}__{config.run_id}",
         )
-        config.checkpoint_path = os.path.join(
-            config.model_output_dir, "checkpoint_pretraining.pt"
-        )
+        config.checkpoint_path = os.path.join(config.model_output_dir, "checkpoint_pretraining.pt")
         if config.log_wandb and config.global_rank == 0:
-            wandb.config.update(
-                {"checkpoint_path": config.checkpoint_path}, allow_val_change=True
-            )
+            wandb.config.update({"checkpoint_path": config.checkpoint_path}, allow_val_change=True)
 
     # For consistency with finetune, linearprobe and kNN jobs, record the
     # pretrained_run_name and pretrained_run_id.
     if config.log_wandb and config.global_rank == 0:
-        wandb.config.update(
-            {"pretrained_run_name": config.run_name, "pretrained_run_id": config.run_id}
-        )
+        wandb.config.update({"pretrained_run_name": config.run_name, "pretrained_run_id": config.run_id})
 
     if config.checkpoint_path is None:
         print("Model will not be saved.")
@@ -384,6 +378,12 @@ def run(config):
         model.load_state_dict(checkpoint["model"])
         optimizer.load_state_dict(checkpoint["optimizer"])
         scheduler.load_state_dict(checkpoint["scheduler"])
+        # Load scaler state if available and we're using mixed precision
+        if scaler is not None and "scaler" in checkpoint:
+            scaler.load_state_dict(checkpoint["scaler"])
+            print("Loaded scaler state from checkpoint.")
+        elif scaler is not None:
+            print("Scaler state not found in checkpoint, using fresh scaler.")
         best_stats["max_accuracy"] = checkpoint.get("max_accuracy", 0)
         best_stats["best_epoch"] = checkpoint.get("best_epoch", 0)
 
@@ -393,50 +393,47 @@ def run(config):
     print()
     print(config, flush=True)
     print()
-
+    
     # Save the number of trainable parameters for logging
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     if config.log_wandb and config.global_rank == 0:
         wandb.log({"params": trainable_params})
-
+    
     # Ensure modules are on the correct device
     model = model.to(device)
 
     # KNN Configuration =======================================================
     # Create configuration for kNN evaluation similar to pandora/pretrain.py
     import argparse
-
     knn_config = argparse.Namespace()
     knn_config.pretrained_checkpoint_path = config.checkpoint_path
     knn_config.data_dir = config.data_dir
     knn_config.dataset_name = config.dataset_name
-    knn_config.taxon = getattr(
-        config, "knn_taxon", "genus"
-    )  # Use configurable taxonomic level
+    knn_config.taxon = getattr(config, 'knn_taxon', 'genus')  # Use configurable taxonomic level
     knn_config.n_neighbors = 1
     knn_config.metric = "cosine"
-
+    
     # Copy relevant parameters from the main config
     knn_config.k_mer = config.k_mer
     knn_config.stride = config.stride
     knn_config.max_len = config.max_len
     knn_config.tokenizer = config.tokenizer
-    knn_config.bpe_path = getattr(config, "bpe_path", None)
+    knn_config.bpe_path = getattr(config, 'bpe_path', None)
     knn_config.tokenize_n_nucleotide = config.tokenize_n_nucleotide
-    knn_config.predict_n_nucleotide = getattr(config, "predict_n_nucleotide", False)
-    knn_config.pretrain_levenshtein = getattr(config, "pretrain_levenshtein", False)
-    knn_config.levenshtein_vectorized = getattr(config, "levenshtein_vectorized", False)
-    knn_config.n_layers = getattr(config, "n_layers", 12)
-    knn_config.n_heads = getattr(config, "n_heads", 12)
-
+    knn_config.predict_n_nucleotide = getattr(config, 'predict_n_nucleotide', False)
+    knn_config.pretrain_levenshtein = getattr(config, 'pretrain_levenshtein', False)
+    knn_config.levenshtein_vectorized = getattr(config, 'levenshtein_vectorized', False)
+    knn_config.n_layers = getattr(config, 'n_layers', 4)
+    knn_config.n_heads = getattr(config, 'n_heads', 4)
+    
     # Logging configuration
     knn_config.log_wandb = config.log_wandb and config.global_rank == 0
-    knn_config.wandb_entity = getattr(config, "wandb_entity", None)
-    knn_config.wandb_project = getattr(config, "wandb_project", None)
-    knn_config.run_name = getattr(config, "run_name", None)
-    knn_config.run_id = getattr(config, "run_id", None)
+    knn_config.wandb_entity = getattr(config, 'wandb_entity', None)
+    knn_config.wandb_project = getattr(config, 'wandb_project', None)
+    knn_config.run_name = getattr(config, 'run_name', None)
+    knn_config.run_id = getattr(config, 'run_id', None)
     knn_config.seed = config.seed
-    knn_config.deterministic = getattr(config, "deterministic", False)
+    knn_config.deterministic = getattr(config, 'deterministic', False)
     knn_config.disable_wandb = False
 
     timing_stats = {}
@@ -462,18 +459,12 @@ def run(config):
             # reproducible if it is rerun with the same number of GPUs (and the same
             # number of CPU workers for the dataloader).
             utils.set_rng_seeds_fixed(epoch_seed + config.global_rank, all_gpu=False)
-            if isinstance(
-                getattr(dataloader_train, "generator", None), torch.Generator
-            ):
+            if isinstance(getattr(dataloader_train, "generator", None), torch.Generator):
                 # Finesse the dataloader's RNG state, if it is not using the global state.
                 dataloader_train.generator.manual_seed(epoch_seed + config.global_rank)
-            if isinstance(
-                getattr(dataloader_train.sampler, "generator", None), torch.Generator
-            ):
+            if isinstance(getattr(dataloader_train.sampler, "generator", None), torch.Generator):
                 # Finesse the sampler's RNG state, if it is not using the global RNG state.
-                dataloader_train.sampler.generator.manual_seed(
-                    config.seed + epoch + 10000 * config.global_rank
-                )
+                dataloader_train.sampler.generator.manual_seed(config.seed + epoch + 10000 * config.global_rank)
 
         if hasattr(dataloader_train.sampler, "set_epoch"):
             # Handling for DistributedSampler.
@@ -501,6 +492,7 @@ def run(config):
             n_samples_seen=n_samples_seen,
             distance_table=distance_table,
             n_special_tokens=len(dataset_train.special_tokens),
+            scaler=scaler,
         )
         t_end_train = time.time()
 
@@ -562,15 +554,18 @@ def run(config):
 
         # Save model ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         t_start_save = time.time()
-        if config.model_output_dir and (
-            not config.distributed or config.global_rank == 0
-        ):
+        if config.model_output_dir and (not config.distributed or config.global_rank == 0):
+            save_dict = {
+                "model": model,
+                "optimizer": optimizer,
+                "scheduler": scheduler,
+            }
+            # Add scaler state if using mixed precision
+            if scaler is not None:
+                save_dict["scaler"] = scaler
+                
             safe_save_model(
-                {
-                    "model": model,
-                    "optimizer": optimizer,
-                    "scheduler": scheduler,
-                },
+                save_dict,
                 config.checkpoint_path,
                 config=config,
                 epoch=epoch,
@@ -580,9 +575,7 @@ def run(config):
                 **best_stats,
             )
             if config.save_best_model and best_stats["best_epoch"] == epoch:
-                ckpt_path_best = os.path.join(
-                    config.model_output_dir, "best_pretraining.pt"
-                )
+                ckpt_path_best = os.path.join(config.model_output_dir, "best_pretraining.pt")
                 print(f"Copying model to {ckpt_path_best}")
                 shutil.copyfile(config.checkpoint_path, ckpt_path_best)
 
@@ -591,7 +584,7 @@ def run(config):
 
         # kNN Evaluation ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         # Run kNN evaluation periodically (similar to pandora/pretrain.py)
-        knn_freq = getattr(config, "knn_eval_frequency", 5)
+        knn_freq = getattr(config, 'knn_eval_frequency', 5)
         if config.global_rank == 0 and knn_freq > 0 and epoch % knn_freq == 1:
             print("Running kNN evaluation...")
             try:
@@ -615,18 +608,9 @@ def run(config):
                     "Pretraining/stepwise/epoch_progress": epoch,
                     "Pretraining/stepwise/n_samples_seen": n_samples_seen,
                     "Pretraining/epochwise/epoch": epoch,
-                    **{
-                        f"Pretraining/epochwise/Train/{k}": v
-                        for k, v in train_stats.items()
-                    },
-                    **{
-                        f"Pretraining/epochwise/{eval_set}/{k}": v
-                        for k, v in eval_stats.items()
-                    },
-                    **{
-                        f"Pretraining/epochwise/duration/{k}": v
-                        for k, v in timing_stats.items()
-                    },
+                    **{f"Pretraining/epochwise/Train/{k}": v for k, v in train_stats.items()},
+                    **{f"Pretraining/epochwise/{eval_set}/{k}": v for k, v in eval_stats.items()},
+                    **{f"Pretraining/epochwise/duration/{k}": v for k, v in timing_stats.items()},
                 },
                 step=total_step,
             )
@@ -641,9 +625,7 @@ def run(config):
     if start_epoch > config.epochs:
         print("Pretraining already completed!")
     else:
-        print(
-            f"Pretraining complete! (Trained epochs {start_epoch} to {config.epochs})"
-        )
+        print(f"Pretraining complete! (Trained epochs {start_epoch} to {config.epochs})")
     print(
         f"Best {eval_set} accuracy was {best_stats['max_accuracy']:.2f}%,"
         f" seen at the end of epoch {best_stats['best_epoch']}",
@@ -666,6 +648,7 @@ def train_one_epoch(
     n_samples_seen=0,
     distance_table=None,
     n_special_tokens=2,
+    scaler=None,
 ):
     r"""
     Train the encoder and classifier for one epoch.
@@ -700,6 +683,8 @@ def train_one_epoch(
         A pre-computed table of edit distances (irrelevant).
     n_special_tokens: int, default=2
         Number of special (non-kmer) tokens used by the tokenizer.
+    scaler : torch.cuda.amp.GradScaler, optional
+        Gradient scaler for mixed precision training.
 
     Returns
     -------
@@ -752,13 +737,9 @@ def train_one_epoch(
         masked_input = sequences.clone()
         random_mask = torch.rand(sequences.shape, device=device)
         masked_input = sequences.clone()
-        random_mask = torch.rand(
-            masked_input.shape, device=device
-        )  # I can only do this for non-overlapping
+        random_mask = torch.rand(masked_input.shape, device=device)  # I can only do this for non-overlapping
         input_maskout = random_mask < mask_ratio
-        input_maskout &= (
-            special_tokens_mask  # Cannot mask the special tokens including [UNK]
-        )
+        input_maskout &= special_tokens_mask  # Cannot mask the special tokens including [UNK]
         masked_input[input_maskout] = 0
 
         # Forward pass --------------------------------------------------------
@@ -766,14 +747,26 @@ def train_one_epoch(
         # N.B. To accurately time steps on GPU we need to use torch.cuda.Event
         ct_forward = torch.cuda.Event(enable_timing=True)
         ct_forward.record()
-        # Perform the forward pass through the model
-        out = model(masked_input, attention_mask=att_mask)
-        targets = sequences - n_special_tokens * (sequences > (n_special_tokens - 1))
-        # Measure loss
-        loss = criterion(
-            out.logits.view(-1, 4**config.k_mer)[special_tokens_mask.view(-1)],
-            targets.view(-1)[special_tokens_mask.view(-1)],
-        )
+        
+        # Perform the forward pass through the model with mixed precision
+        if scaler is not None:
+            from torch.cuda.amp import autocast
+            with autocast():
+                out = model(masked_input, attention_mask=att_mask)
+                targets = sequences - n_special_tokens * (sequences > (n_special_tokens - 1))
+                # Measure loss
+                loss = criterion(
+                    out.logits.view(-1, 4**config.k_mer)[special_tokens_mask.view(-1)],
+                    targets.view(-1)[special_tokens_mask.view(-1)],
+                )
+        else:
+            out = model(masked_input, attention_mask=att_mask)
+            targets = sequences - n_special_tokens * (sequences > (n_special_tokens - 1))
+            # Measure loss
+            loss = criterion(
+                out.logits.view(-1, 4**config.k_mer)[special_tokens_mask.view(-1)],
+                targets.view(-1)[special_tokens_mask.view(-1)],
+            )
 
         # Backward pass -------------------------------------------------------
         # Reset gradients
@@ -781,13 +774,26 @@ def train_one_epoch(
         # Now the backward pass
         ct_backward = torch.cuda.Event(enable_timing=True)
         ct_backward.record()
-        loss.backward()
+        
+        if scaler is not None:
+            # Mixed precision backward pass
+            scaler.scale(loss).backward()
+        else:
+            # Standard backward pass
+            loss.backward()
 
         # Update --------------------------------------------------------------
         # Use our optimizer to update the model parameters
         ct_optimizer = torch.cuda.Event(enable_timing=True)
         ct_optimizer.record()
-        optimizer.step()
+        
+        if scaler is not None:
+            # Mixed precision optimizer step
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            # Standard optimizer step
+            optimizer.step()
 
         # Step the scheduler each batch
         scheduler.step()
@@ -838,19 +844,14 @@ def train_one_epoch(
         with torch.no_grad():
             is_correct = x_pred == targets
             # Overall accuracy, including tokens which weren't masked out
-            acc_all = (
-                is_correct[special_tokens_mask].sum()
-                / is_correct[special_tokens_mask].numel()
-            )
+            acc_all = is_correct[special_tokens_mask].sum() / is_correct[special_tokens_mask].numel()
             # Accuracy only on the masked tokens
             acc_msk = (
-                is_correct[input_maskout & special_tokens_mask].sum()
-                / (input_maskout & special_tokens_mask).sum()
+                is_correct[input_maskout & special_tokens_mask].sum() / (input_maskout & special_tokens_mask).sum()
             )
             # Accuracy only on the non-masked tokens
             acc_kpt = (
-                is_correct[~input_maskout & special_tokens_mask].sum()
-                / (~input_maskout & special_tokens_mask).sum()
+                is_correct[~input_maskout & special_tokens_mask].sum() / (~input_maskout & special_tokens_mask).sum()
             )
             if config.distributed:
                 # Fetch results from other GPUs
@@ -865,14 +866,9 @@ def train_one_epoch(
             acc_all_epoch += acc_all
 
         # Log to console
-        if (
-            batch_idx <= 2
-            or batch_idx % config.print_interval == 0
-            or batch_idx >= len(dataloader) - 1
-        ):
+        if batch_idx <= 2 or batch_idx % config.print_interval == 0 or batch_idx >= len(dataloader) - 1:
             print(
-                f"Train Epoch:{epoch:3d}"
-                + (f"/{n_epoch}" if n_epoch is not None else ""),
+                f"Train Epoch:{epoch:3d}" + (f"/{n_epoch}" if n_epoch is not None else ""),
                 " Step:{:6d}/{}".format(batch_idx + 1, len(dataloader)),
                 " Loss:{:8.5f}".format(loss_batch),
                 " AccMask:{:6.2f}%".format(acc_msk),
@@ -887,11 +883,7 @@ def train_one_epoch(
             dist.reduce(mask_ratio_actual, 0, op=dist.ReduceOp.AVG)
 
         # Log to wandb
-        if (
-            config.log_wandb
-            and config.global_rank == 0
-            and batch_idx % config.log_interval == 0
-        ):
+        if config.log_wandb and config.global_rank == 0 and batch_idx % config.log_interval == 0:
             # Create a log dictionary to send to wandb
             # Epoch progress interpolates smoothly between epochs
             epoch_progress = epoch - 1 + (batch_idx + 1) / len(dataloader)
@@ -926,31 +918,15 @@ def train_one_epoch(
             # Record how long it took to do each step in the pipeline
             if t_start_wandb is not None:
                 # Record how long it took to send to wandb last time
-                log_dict["Pretraining/stepwise/duration/wandb"] = (
-                    t_end_wandb - t_start_wandb
-                )
-            log_dict["Pretraining/stepwise/duration/dataloader"] = (
-                t_start_batch - t_end_batch
-            )
-            log_dict["Pretraining/stepwise/duration/preamble"] = (
-                t_start_forward - t_start_batch
-            )
-            log_dict["Pretraining/stepwise/duration/forward"] = (
-                ct_forward.elapsed_time(ct_backward) / 1000
-            )
-            log_dict["Pretraining/stepwise/duration/backward"] = (
-                ct_backward.elapsed_time(ct_optimizer) / 1000
-            )
-            log_dict["Pretraining/stepwise/duration/optimizer"] = (
-                ct_optimizer.elapsed_time(ct_logging) / 1000
-            )
-            log_dict["Pretraining/stepwise/duration/overall"] = (
-                time.time() - t_end_batch
-            )
+                log_dict["Pretraining/stepwise/duration/wandb"] = t_end_wandb - t_start_wandb
+            log_dict["Pretraining/stepwise/duration/dataloader"] = t_start_batch - t_end_batch
+            log_dict["Pretraining/stepwise/duration/preamble"] = t_start_forward - t_start_batch
+            log_dict["Pretraining/stepwise/duration/forward"] = ct_forward.elapsed_time(ct_backward) / 1000
+            log_dict["Pretraining/stepwise/duration/backward"] = ct_backward.elapsed_time(ct_optimizer) / 1000
+            log_dict["Pretraining/stepwise/duration/optimizer"] = ct_optimizer.elapsed_time(ct_logging) / 1000
+            log_dict["Pretraining/stepwise/duration/overall"] = time.time() - t_end_batch
             t_start_wandb = time.time()
-            log_dict["Pretraining/stepwise/duration/logging"] = (
-                t_start_wandb - t_start_logging
-            )
+            log_dict["Pretraining/stepwise/duration/logging"] = t_start_wandb - t_start_logging
             # Send to wandb
             wandb.log(log_dict, step=total_step)
             t_end_wandb = time.time()
@@ -1034,25 +1010,19 @@ def evaluate(
                 # Either exlude the last token [N..N] if config.predict_n_nucleotide == True
                 # Or exclude all tokens containing Ns i.e "bad kamers" whose index in the vocab
                 # is greater than 4**k
-                special_tokens_mask &= sequences < (
-                    n_special_tokens + 4**config.k_mer - 1
-                )
+                special_tokens_mask &= sequences < (n_special_tokens + 4**config.k_mer - 1)
 
             special_tokens_mask = special_tokens_mask.to(device)
             masked_input = sequences.clone()
             random_mask = torch.rand(masked_input.shape, generator=rng, device=device)
             input_maskout = random_mask < mask_ratio
-            input_maskout &= (
-                special_tokens_mask  # Cannot mask the special tokens including [UNK]
-            )
+            input_maskout &= special_tokens_mask  # Cannot mask the special tokens including [UNK]
             masked_input[input_maskout] = 0
 
             # Forward pass ----------------------------------------------------
             out = model(masked_input, attention_mask=att_mask)
             # Measure loss
-            targets = sequences - n_special_tokens * (
-                sequences > (n_special_tokens - 1)
-            )
+            targets = sequences - n_special_tokens * (sequences > (n_special_tokens - 1))
             loss = criterion(
                 out.logits.view(-1, 4**config.k_mer)[special_tokens_mask.view(-1)],
                 targets.view(-1)[special_tokens_mask.view(-1)],
@@ -1075,9 +1045,7 @@ def evaluate(
             is_correct = x_pred == targets
             # Overall accuracy, including tokens which weren't masked out
             acc_all = (
-                batch_size_this_gpu
-                * is_correct[special_tokens_mask].sum()
-                / is_correct[special_tokens_mask].numel()
+                batch_size_this_gpu * is_correct[special_tokens_mask].sum() / is_correct[special_tokens_mask].numel()
             )
             # Accuracy only on the masked tokens
             acc_msk = (
@@ -1267,6 +1235,14 @@ def get_parser():
         type=str,
         default="OneCycle",
         help="Learning rate scheduler. Default: %(default)s",
+    )
+    group.add_argument(
+        "--mixed-precision",
+        "--mixed_precision",
+        "--amp",
+        dest="mixed_precision",
+        action="store_true",
+        help="Enable Automatic Mixed Precision (AMP) training for faster training and reduced memory usage.",
     )
     parser.add_argument(
         "--tokenize-n-nucleotide",

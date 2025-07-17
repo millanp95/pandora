@@ -127,7 +127,11 @@ def run(config):
             job_type="pretrain",
         )
         wandb.config.update(
-            {"checkpoint_path": config.checkpoint_path}, allow_val_change=True
+            {
+                "checkpoint_path": config.checkpoint_path,
+                "mixed_precision": config.mixed_precision,
+            }, 
+            allow_val_change=True
         )
 
     # DataLoader with DistributedSampler =====================================
@@ -191,9 +195,24 @@ def run(config):
 
     criterion = nn.CrossEntropyLoss()
 
+    # Mixed Precision Setup =====================================
+    scaler = None
+    if config.mixed_precision and torch.cuda.is_available():
+        from torch.cuda.amp import GradScaler
+        scaler = GradScaler()
+        print("Mixed precision training enabled with GradScaler.")
+    elif config.mixed_precision:
+        print("Warning: Mixed precision requested but CUDA is not available. Running in full precision.")
+
     if os.path.exists(config.checkpoint_path):
         optimizer.load_state_dict(ckpt["optimizer"])
         scheduler.load_state_dict(ckpt["scheduler"])
+        # Load scaler state if available and we're using mixed precision
+        if scaler is not None and "scaler" in ckpt:
+            scaler.load_state_dict(ckpt["scaler"])
+            print("Loaded scaler state from checkpoint.")
+        elif scaler is not None:
+            print("Scaler state not found in checkpoint, using fresh scaler.")
 
     # Training loop =====================================
 
@@ -220,24 +239,47 @@ def run(config):
             mask = mask.to(device)
             att_mask = att_mask.to(device)
 
-            logits = model(x_masked, att_mask)  # (B, L, 4)
-            preds = logits.argmax(dim=-1)  # (B, L)
+            # Forward pass with mixed precision support
+            if scaler is not None:
+                from torch.cuda.amp import autocast
+                with autocast():
+                    logits = model(x_masked, att_mask)  # (B, L, 4)
+                    preds = logits.argmax(dim=-1)  # (B, L)
 
-            valid_pos = (targets >= 0) & (targets < 4)
-            masked_pos = mask & valid_pos
-            seen_pos = (~mask) & valid_pos
+                    valid_pos = (targets >= 0) & (targets < 4)
+                    masked_pos = mask & valid_pos
+                    seen_pos = (~mask) & valid_pos
 
-            lm = (
-                criterion(logits[masked_pos], targets[masked_pos])
-                if masked_pos.any()
-                else torch.tensor(0.0, device=device)
-            )
-            ls = (
-                criterion(logits[seen_pos], targets[seen_pos])
-                if seen_pos.any()
-                else torch.tensor(0.0, device=device)
-            )
-            loss = config.weight_mask * lm + (1 - config.weight_mask) * ls
+                    lm = (
+                        criterion(logits[masked_pos], targets[masked_pos])
+                        if masked_pos.any()
+                        else torch.tensor(0.0, device=device)
+                    )
+                    ls = (
+                        criterion(logits[seen_pos], targets[seen_pos])
+                        if seen_pos.any()
+                        else torch.tensor(0.0, device=device)
+                    )
+                    loss = config.weight_mask * lm + (1 - config.weight_mask) * ls
+            else:
+                logits = model(x_masked, att_mask)  # (B, L, 4)
+                preds = logits.argmax(dim=-1)  # (B, L)
+
+                valid_pos = (targets >= 0) & (targets < 4)
+                masked_pos = mask & valid_pos
+                seen_pos = (~mask) & valid_pos
+
+                lm = (
+                    criterion(logits[masked_pos], targets[masked_pos])
+                    if masked_pos.any()
+                    else torch.tensor(0.0, device=device)
+                )
+                ls = (
+                    criterion(logits[seen_pos], targets[seen_pos])
+                    if seen_pos.any()
+                    else torch.tensor(0.0, device=device)
+                )
+                loss = config.weight_mask * lm + (1 - config.weight_mask) * ls
 
             # average across GPUs
             if config.distributed:
@@ -287,8 +329,16 @@ def run(config):
                 print("===================")
 
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            
+            # Backward pass with mixed precision support
+            if scaler is not None:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
+                
             scheduler.step()
 
             # accumulate epoch stats
@@ -334,8 +384,13 @@ def run(config):
                 f"MeanLm={avg_lm:.4f} MeanLs={avg_ls:.4f} | "
                 f"MeanAm={avg_am:.2f}% MeanAs={avg_as:.2f}%"
             )
+            save_dict = {"model": model, "optimizer": optimizer, "scheduler": scheduler}
+            # Add scaler state if using mixed precision
+            if scaler is not None:
+                save_dict["scaler"] = scaler
+                
             safe_save_model(
-                {"model": model, "optimizer": optimizer, "scheduler": scheduler},
+                save_dict,
                 config.checkpoint_path,
                 config=config,
                 epoch=epoch,
@@ -498,6 +553,14 @@ def get_parser():
         type=str,
         default="OneCycle",
         help="Learning rate scheduler. Default: %(default)s",
+    )
+    group.add_argument(
+        "--mixed-precision",
+        "--mixed_precision",
+        "--amp",
+        dest="mixed_precision",
+        action="store_true",
+        help="Enable Automatic Mixed Precision (AMP) training for faster training and reduced memory usage.",
     )
     # Output checkpoint args --------------------------------------------------
     group = parser.add_argument_group("Output checkpoint")
