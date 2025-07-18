@@ -24,6 +24,14 @@ from barcodebert.datasets import DNADataset
 from barcodebert.io import get_project_root, safe_save_model
 from barcodebert.knn_probing import run_knn
 
+# Import the fast attention model conditionally to avoid import errors
+try:
+    from barcodebert.models import FastBertForTokenClassification
+    FAST_ATTENTION_AVAILABLE = True
+except ImportError:
+    FAST_ATTENTION_AVAILABLE = False
+    FastBertForTokenClassification = None
+
 
 
 BASE_BATCH_SIZE = 64
@@ -217,7 +225,15 @@ def run(config):
     )
 
     # Initializing a model (with random weights) from the bert-base-uncased style configuration
-    model = BertForTokenClassification(bert_config)
+    if getattr(config, 'fast_attention', False):
+        if FAST_ATTENTION_AVAILABLE:
+            print("Using FastBertForTokenClassification with optimized attention")
+            model = FastBertForTokenClassification(bert_config)
+        else:
+            print("Warning: FastBertForTokenClassification not available, falling back to standard BertForTokenClassification")
+            model = BertForTokenClassification(bert_config)
+    else:
+        model = BertForTokenClassification(bert_config)
 
     # Configure model for distributed training --------------------------------
     print("\nModel architecture:")
@@ -329,6 +345,7 @@ def run(config):
         "jumbo_cls":False,
         "pos_enc":  "Learned",
         "apex": config.mixed_precision,
+        "fast_attention": getattr(config, 'fast_attention', False),
         })
         # If a run_id was not supplied at the command prompt, wandb will
         # generate a name. Let's use that as the run_name.
@@ -379,6 +396,16 @@ def run(config):
 
     if checkpoint is not None:
         print(f"Loading state from checkpoint (epoch {checkpoint['epoch']})")
+        
+        # Check model type compatibility
+        checkpoint_model_type = checkpoint.get("model_type", "BertForTokenClassification")
+        current_model_type = "FastBertForTokenClassification" if getattr(config, 'fast_attention', False) else "BertForTokenClassification"
+        
+        if checkpoint_model_type != current_model_type:
+            print(f"Warning: Model type mismatch! Checkpoint was saved with {checkpoint_model_type}")
+            print(f"         but current configuration uses {current_model_type}")
+            print("         This may cause compatibility issues.")
+        
         total_step = checkpoint["total_step"]
         n_samples_seen = checkpoint["n_samples_seen"]
         model.load_state_dict(checkpoint["model"])
@@ -565,6 +592,7 @@ def run(config):
                 total_step=total_step,
                 n_samples_seen=n_samples_seen,
                 bert_config=bert_config.to_dict(),
+                model_type="FastBertForTokenClassification" if getattr(config, 'fast_attention', False) else "BertForTokenClassification",
                 **best_stats,
             )
             if config.save_best_model and best_stats["best_epoch"] == epoch:
@@ -1188,6 +1216,14 @@ def get_parser():
         type=int,
         default=12,
         help="Number of attention heads in the transformer. Default: %(default)s",
+    )
+    group.add_argument(
+        "--fast-att",
+        "--fast_att",
+        "--fast-attention",
+        dest="fast_attention",
+        action="store_true",
+        help="Use FastBertForTokenClassification with optimized attention implementation using F.scaled_dot_product_attention.",
     )
     # Optimization args -------------------------------------------------------
     group = parser.add_argument_group("Optimization routine")

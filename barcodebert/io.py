@@ -12,6 +12,14 @@ from transformers import (BertConfig, BertForMaskedLM,
 
 from .utils import remove_extra_pre_fix
 
+# Import the fast attention model conditionally
+try:
+    from .models import FastBertForTokenClassification
+    FAST_ATTENTION_AVAILABLE = True
+except ImportError:
+    FAST_ATTENTION_AVAILABLE = False
+    FastBertForTokenClassification = None
+
 PACKAGE_DIR = os.path.dirname(os.path.abspath(getsourcefile(lambda: 0)))
 
 
@@ -82,7 +90,20 @@ def load_pretrained_model(checkpoint_path, device=None):
     assert "bert_config" in ckpt  # You may be trying to load an old checkpoint
 
     bert_config = BertConfig(**ckpt["bert_config"])
-    model = BertForTokenClassification(bert_config)
+    
+    # Check if the checkpoint specifies which model type was used
+    model_type = ckpt.get("model_type", "BertForTokenClassification")
+    
+    if model_type == "FastBertForTokenClassification" and FAST_ATTENTION_AVAILABLE:
+        print("Loading FastBertForTokenClassification model")
+        model = FastBertForTokenClassification(bert_config)
+    elif model_type == "FastBertForTokenClassification" and not FAST_ATTENTION_AVAILABLE:
+        print("Warning: FastBertForTokenClassification not available, falling back to BertForTokenClassification")
+        print("This may cause compatibility issues if the checkpoint was saved with FastBertForTokenClassification")
+        model = BertForTokenClassification(bert_config)
+    else:
+        model = BertForTokenClassification(bert_config)
+        
     model.load_state_dict(remove_extra_pre_fix(ckpt["model"]))
     model.eval()
     print(f"Loaded model from {checkpoint_path}")
