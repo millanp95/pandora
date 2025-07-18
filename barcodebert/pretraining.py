@@ -3,6 +3,7 @@
 import builtins
 import math
 import os
+import sys
 import shutil
 import time
 from datetime import datetime
@@ -15,10 +16,15 @@ from torch import nn
 from torch.utils.data.distributed import DistributedSampler
 from transformers import BertConfig, BertForTokenClassification
 
+sys.path.append(".")
+
+
 from barcodebert import utils
 from barcodebert.datasets import DNADataset
 from barcodebert.io import get_project_root, safe_save_model
 from barcodebert.knn_probing import run_knn
+
+
 
 BASE_BATCH_SIZE = 64
 
@@ -412,20 +418,7 @@ def run(config):
     knn_config.taxon = getattr(config, 'knn_taxon', 'genus')  # Use configurable taxonomic level
     knn_config.n_neighbors = 1
     knn_config.metric = "cosine"
-    
-    # Copy relevant parameters from the main config
-    knn_config.k_mer = config.k_mer
-    knn_config.stride = config.stride
-    knn_config.max_len = config.max_len
-    knn_config.tokenizer = config.tokenizer
-    knn_config.bpe_path = getattr(config, 'bpe_path', None)
-    knn_config.tokenize_n_nucleotide = config.tokenize_n_nucleotide
-    knn_config.predict_n_nucleotide = getattr(config, 'predict_n_nucleotide', False)
-    knn_config.pretrain_levenshtein = getattr(config, 'pretrain_levenshtein', False)
-    knn_config.levenshtein_vectorized = getattr(config, 'levenshtein_vectorized', False)
-    knn_config.n_layers = getattr(config, 'n_layers', 4)
-    knn_config.n_heads = getattr(config, 'n_heads', 4)
-    
+        
     # Logging configuration
     knn_config.log_wandb = config.log_wandb and config.global_rank == 0
     knn_config.wandb_entity = getattr(config, 'wandb_entity', None)
