@@ -134,7 +134,7 @@ class FastBertSelfAttention(nn.Module):
         return outputs
 
 
-class MyBertForTokenClassification(BertForTokenClassification):
+class FastBertForTokenClassification(BertForTokenClassification):
     def __init__(self, config):
         super().__init__(config)
         for layer in self.bert.encoder.layer:
