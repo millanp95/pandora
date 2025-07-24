@@ -19,440 +19,456 @@ date: last-modified
     - [Some examples]{.scriptsize}
     - [Different pre-training strategies]{.scriptsize}
     - [BarcodeBERT]{.scriptsize}
-2. Motivation
-3. Computational Optimizations
-    - [Mixed precission computation]{.scriptsize}
-    - [`xFormers` library]{.scriptsize}
+2. Motivation (The story of BarcodeMAE)
+3. Engineering Optimizations
+    - [Mixed precision computation]{.scriptsize}
+    - [Fused operations]{.scriptsize}
 4. Architectural Optimizations
     - [CNN-based tokenization (AlphaGenome)]{.scriptsize}
     - [Jumbo CLS and registers]{.scriptsize}
-    - [Alternative Positional Ecodings]{.scriptsize}
 5. Preliminary Results 
 6. Conclusion and Future Work
 :::
 
-# Foundation models in genomics {background-color="#40666e"}
+# Foundation models for molecular information {background-color="#40666e"}
 
-## DNA foundation models
-A **foundation model** is any model that is trained on broad data that can be adapted to a wide range of downstream tasks [(_Bommasani et al., 2021_)]{.scriptsize}. 
+## Foundation models in the _-omics_
+_"A **foundation model** is any model that is trained on broad data and can be adapted to a wide range of downstream tasks"_ [(_Bommasani et al., 2021_)]{.scriptsize}. 
+
+. . . 
 
 :::: {.columns}
 
 ::: {.column width="50%"}
 
-- [Full understanding of DNA as a language is particularly hard because every genome is composed of several regions corresponding to different abstraction levels]{.small}
-- [Every cell has the same "set of instructions" but it differentiates into various cell types]{.small}
+- [Full understanding of genomic information as a language is particularly hard because every cell has the same "set of instructions" but it differentiates into various cell types]{.small}
+- [Every genome is composed of several regions corresponding to **different abstraction levels** (modalities)]{.small}
 :::
 
 ::: {.column width="50%" style="text-align:center;"}
-![](_img/central_dogma.png){width="300%"}
-[*Source: Adapted from [Khan Academy](https://www.khanacademy.org/science/ap-biology/gene-expression-and-regulation/translation/a/intro-to-gene-expression-central-dogma).*]{.tiny}
+![[Source: Adapted from [Khan Academy](https://www.khanacademy.org/science/ap-biology/gene-expression-and-regulation/translation/a/intro-to-gene-expression-central-dogma).]{.tiny}](_img/central_dogma.png){width="300%"}
+
 :::
 
 
 ::::
 
+. . .
 
-## Some examples
-![](_img/Evo_ideal_DNA_Language_Model.png){fig-align="center" fig-width="50%" fig-cap="Source: Adapted from (Nguyen et al., 2024)." fig-cap-location="bottom"}
+One of the easiest way of tackling this "problem" was developing one model or each data modality.
 
+
+## Foundation models in the _-omics_
+
+::: {style="text-align:center;"}
+![[Source: Adapted from (Nguyen et al., 2024)]{.tiny .text_center}](_img/Evo_ideal_DNA_Language_Model.png){width=50%}
+:::
+
+::: {.incremental}
 - Since only ~2% of the genome codes for proteins, several specialized models have been develped the DNA regions whose function is fully understood.
 - Optimal design choices may vary from one "domain" to another.
 - We will focus on the **DNA modality** for the rest of the talk.
+:::
 
-## Concrete examples {.scrollable}
+## Some examples of DNA fundation models {.scrollable}
 
-| Model                      | Pre-training Strategy                                                                      | Architecture                                                         | # Params.                                           | Pretraining Data                                          | Downstream Tasks                                                                            |
-| -------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| [**BarcodeBERT**][1]            | MLM                  | BERT-base (12 layers, 768 hidden, 12 heads)              | ∼110 M                                     | ∼1.5 M invertebrate DNA barcodes               | Species‐level classification, taxonomic assignment, k-NN, zero-shot clusering     |
-|   [**HyenaDNA**][3]             | Next-nucleotide prediction         | Decoder-only SSM - Hyena Architecture   | ∼1.6 M               | Human genome  | Regulatory element prediction, enhancer identification, species classification  |
-|   [**MambaDNA** ][5]             | Next-token prediction                | RC-equivariant state-space “MambaDNA” block              | N/A                                        | Human (or multi-species) genome              | Variant-effect prediction, reverse-complement tasks                           |
-|  [**BarcodeMamba** ][6]         | MLM / Next-nucleotide prediction  | Structured State-Space Model (Mamba-2)             | ∼9 M           | DNA barcodes                           | Species & genus classification (linear probe, 1-NN)                       |
-| **Nucleotide Transformer** | Masked LM / next-token prediction (50 M–2.5 B scale)                    | Transformer encoder (BERT-style)                        | 50 M‒2.5 B                                | Human (3,202 genomes) & 850 diverse species  | Molecular phenotype prediction, variant effect, enhancer classification        |
-| **Alpha Genome**            |  N/A | U-Net-style + Transformer backbone                     | N/A                                       | Human & mouse genomes                    | Gene regulation prediction, variant effect scoring                   |
-| **Evo**                    | Next-token prediction    | StripedHyena (hybrid conv + attention)       | ∼7 B                                        | Prokaryotic & phage genomes (\~300 B tokens)  | Functional annotation, phenotype prediction, generative sequence design |
-| [**MycoAI**][15]              | N/A            | BERT & CNN ensemble                                    |N/A                                    | Fungal ITS barcodes (UNITE)                 | Taxonomic classification at genus & species levels                        |
-|      [**JanusDNA** ][16]          | Hybrid autoregressive + MLM                             | Hybrid Mamba + Attention + MoE                         | (not specified; outperforms 250× larger) | Human & multi-species genomes                | Genomic representation benchmarks (binding, variant effect)                  |
+### Many design Choices in DNA Foundation Models
 
-[1]: https://arxiv.org/abs/2311.02401?utm_source=chatgpt.com "BarcodeBERT: Transformers for Biodiversity Analysis"
-[2]: https://www.researchgate.net/figure/Two-groups-of-baselines-off-the-shelf-foundation-models-pretrained-on-human-genome_tbl1_387105343?utm_source=chatgpt.com "Two groups of baselines: off-the-shelf foundation models pretrained ..."
-[3]: https://arxiv.org/abs/2306.15794 "[2306.15794] HyenaDNA: Long-Range Genomic Sequence Modeling at Single Nucleotide Resolution"
-[4]: https://ar5iv.org/pdf/2306.15794 "[2306.15794] HyenaDNA: Long-Range Genomic Sequence Modeling at Single Nucleotide Resolution"
-[5]: https://arxiv.org/pdf/2403.03234?utm_source=chatgpt.com "[PDF] Bi-Directional Equivariant Long-Range DNA Sequence Modeling"
-[6]: https://openreview.net/pdf?id=6ohFEFTr10&utm_source=chatgpt.com "[PDF] BarcodeMamba: State Space Models for Biodiversity Analysis"
-[7]: https://www.nature.com/articles/s41592-024-02523-z?utm_source=chatgpt.com "Nucleotide Transformer: building and evaluating robust foundation ..."
-[8]: https://storage.googleapis.com/deepmind-media/papers/alphagenome.pdf?utm_source=chatgpt.com "[PDF] AlphaGenome: advancing regulatory variant effect prediction with a ..."
-[9]: https://www.medvolt.ai/blog/google-deepmind-alphagenome-dna-variant-effect-prediction-deepmind?utm_source=chatgpt.com "AlphaGenome: Google DeepMind's Breakthrough Model for ..."
-[10]: https://www.facebook.com/groups/DeepNetGroup/posts/2521479148244952/?utm_source=chatgpt.com "Google DeepMind Releases AlphaGenome: A Deep Learning ..."
-[11]: https://deepmind.google/discover/blog/alphagenome-ai-for-better-understanding-the-genome/?utm_source=chatgpt.com "AlphaGenome: AI for better understanding the genome"
-[12]: https://arcinstitute.org/tools/evo?utm_source=chatgpt.com "Evo 2: DNA Foundation Model | Arc Institute"
-[13]: https://pmc.ncbi.nlm.nih.gov/articles/PMC12057570/?utm_source=chatgpt.com "Sequence modeling and design from molecular to genome scale ..."
-[14]: https://www.together.ai/blog/evo?utm_source=chatgpt.com "Evo: Long-context modeling from molecular to genome scale"
-[15]: https://pubmed.ncbi.nlm.nih.gov/39152642/?utm_source=chatgpt.com "MycoAI: Fast and accurate taxonomic classification for fungal ITS ..."
-[16]: https://arxiv.org/abs/2505.17257 "[2505.17257] JanusDNA: A Powerful Bi-directional Hybrid DNA Foundation Model"
+- **Tokenization:** k-mers /  BPE / single-nucleotide   
+- **Pretraining objectives:** MLM, autoregressive, span-prediction, supervised, distillation  
+- **Architecture:** encoder-only, decoder-only, encoder–decoder, state-space, U-Net, MoE   
+- **Positional encodings:** Sinusoidal, RoPE, ALiBi, Learned 
+- **Data domain:** Barcodes, human, multi-species genomes, metagenomes, Fungal ITS  
+- **Model scale:** from ~1 M to >40 B parameters 
 
+:::{.fragment}
+
+### Representative Models
+
+- **HyenaDNA:** [arXiv:2306.15794](https://arxiv.org/abs/2306.15794){preview-link="true"}  
+- **MambaDNA:** [arxiv:2403.03234](https://arxiv.org/abs/2403.03234){preview-link="true"}  
+- **BarcodeBERT:** [arXiv:2311.02401](https://arxiv.org/abs/2311.02401){preview-link="true"}  
+- **BarcodeMamba:** [OpenReview:6ohFEFTr10](https://openreview.net/pdf?id=6ohFEFTr10){preview-link="true"}  
+- **Nucleotide Transformer:** [Nat. Methods 2024](https://www.nature.com/articles/s41592-024-02523-z){preview-link="true"}  
+- **AlphaGenome:** [biorxiv:2025.06.25.661532v2](https://www.biorxiv.org/content/10.1101/2025.06.25.661532v2){preview-link="true"}  
+- **Evo:** [Arc Institute](https://arcinstitute.org/tools/evo){preview-link="true"}  
+- **MycoAI:** [PubMed:39152642](https://pubmed.ncbi.nlm.nih.gov/39152642/){preview-link="true"}
+- **JanusDNA:** [arXiv:2505.17257](https://arxiv.org/abs/2505.17257){preview-link="true"}
+:::
 
 ## BarcodeBERT
-We developed a nice model 
+::: {style="font-size:0.75em; line-height:1.1; margin:0 1em;"}
+- BarcodeBERT is a BERT-base transformer model pretrained on ∼1M invertebrate DNA barcodes [_(Millan Arias et al., 2024)_]{.small}.
+- It models k-mer co-occurrence via masked LM, randomly masking 50 % of tokens and minimizing  $\mathcal{L}_{\text{MLM}}=-\sum_{i\in M}\log P(x_i\mid x_{\setminus M}),$ where $M$ is the set of masked-out tokens.
 
-![](_img/BarcodeBERT_arch.png){fig-align="center" width=700,
-    height=300 fig-cap="Source: Adapted from (Nguyen et al., 2024)." fig-cap-location="bottom"}
+::: {style="text-align:center;"}
+![[Source: Adapted from (Millan Arias et al., 2024)]{.tiny}](_img/BarcodeBERT_arch.png){width=40%}
+:::
+
+Hidden states serve as features for linear probes or k-NN classification.
+:::
+
+# Motivation: The story of BarcodeMAE {background-color="#40666e"}
+
+## BarcodeMAE 
+Adaptation of MAE (He et al., 2022): Mask 50 % of k-mers, reconstruct via an encoder–decoder architecture 
+
+. . .
+
+:::: {.columns}
+
+::: {.column width="50%"}
+![[Source: Adapted from (Safari et al., 2024)]{.tiny}](_img/BarcodeMAE_arch.png){width=76%}
+:::
 
 
+::: {.column width="50%" style="text-align:center" .fragment .small}
+- **Reviewer request:** rerun experiments on a more general (larger) dataset.   
+- **Challenge:** We chose DNABERT-2’s dataset (architecturally similar) but it takes 12 days/train on 4×A40 → unsustainable for iterations  
+- **Takeaway:** We need “tips & tricks” for faster prototyping and efficient pretraining. 
+- I will only consider the GPU that we have "easy" access to **_(A40, T4, V100, RTX6000)_**. 
+:::
 
-# Motivation {background-color="#40666e"}
 
-## The story of BarcodeMAE 
+::::
 
-# Computational Optimizations {background-color="#40666e"}
+# Engineering Optimizations {background-color="#40666e"}
 
-## Mixed precission computation `APEX`
+## Mixed Precision Training (AMP)
 
-## `xFormers` library
+:::: {.columns}
+
+::: {.column width="50%"}
+### Floating-Point Formats {.scrollable}
+
+::: {style="text-align:center;"}
+![[Source: Adapted from [Lighting AI](https://lightning.ai/pages/community/tutorial/accelerating-large-language-models-with-mixed-precision-techniques/)]{.tiny}](_img/FP_formats.png){width=80%}
+::: 
+
+:::
+
+::: {.column width="50%" style="text-align:left" .fragment .scriptsize}
+The algorithm, first introduced by [(_Narang et al., 2024_)]{.tiny} requires two steps:
+
+- Porting the model to use the FP16 data type where appropriate.
+- Adding loss scaling to preserve small gradient values.
+
+$$\tilde L = S \times L,\quad g = \tfrac{\partial \tilde L}{S}$$
+
+In Pytorch, “automatic mixed precision training” means training with [`torch.autocast`]{.scriptsize} and [`torch.amp.GradScaler`]{.scriptsize} together.
+
+```python
+scaler = GradScaler()
+with autocast():
+    loss = model(input_ids, labels=labels).loss
+scaler.scale(loss).backward()
+scaler.step(optimizer)
+scaler.update()
+```
+
+<!-- #!-- Delivers \~2× throughput and \~50 % memory savings on V100/T4. -->
+:::
+
+::::
+
+
+## Mixed Precision Training (AMP)
+
+### Performance 
+I investigated the impact of AMP for our model in terms of runtime, prediction accuracy, and memory requirements.  
+
+::: {style="text-align:center;"}
+![**Setup:** PyTorch 2.1.1, single V100 GPU, batch size 512, seq-len 660 nuclotides (DNA  barcodes)](_img/mixed_precision_benchmark.png.png){width=65%}
+:::
+
+
+This preliminary results show \~3.2× speedup & \~16% lower peak GPU memory.
+
+
+## Attention Kernel Implementations 
+
+### Naive (non-fused)
+GPUs run thousands of threads in lockstep executing the same piece of code (kernel). In deep learning, every op. is implemented as one or more CUDA kernels.
+
+$$\text{Attn}(Q, K, V) = \text{softmax} \left( \frac{Q K^T}{\sqrt{d}} \right) V $$
+
+```python
+scores = torch.matmul(q, k.transpose(-1, -2)) / math.sqrt(d)
+probs  = torch.softmax(scores, dim=-1)
+y      = torch.matmul(probs, v)
+```
+:::{.fragment}
+The previous implementation of attention launches separate kernels for query-key, softmax, and value matmul and stores the entire matrices  
+:::
+
+## Attention Kernel Implementations 
+### Fused kernels 
+[Combine matmul, softmax & dropout in one CUDA pass, cutting activations to $O(L)$ and reducing launch overhead.]{.small}
+
+:::: {layout-ncol="2" .fragment .scriptsize}
+
+::: {#first-column width="50%"}
+Fused kernels are the foundation of modern efficient attention. Specialized domains and new hardware continue to drive custom kernel work.  
+
+- **FlashAttention**: Tiling-based, reduce the number of I/O operations but increase FLOPS.
+- **xFormers**: `memory_efficient_attention(q,k,v,attn_bias=bias)`
+- **PyTorch 2.0**: `torch.scaled_dot_product_attention`
+- **Custom kernel design**: DiNO v2 uses custom-made kernels
+
+:::
+
+::: {#second-column width="50%"}
+::: {style="text-align:center;"}
+![[**Source:** Adapted from (Dao et al., 2023)]{.tiny}](_img/Flash_attn.png){width=60%}
+:::
+:::
+::::
+
+## Integrating fused kernels to our pipeline {.scrolable}
+:::{.incremental .small}
+1. Refactoring BarcodeBERT under [MosaicBERT](https://www.databricks.com/blog/mosaicbert)'s [(_Portes et al., 2024_)]{.small} composable architecture (Monireh's work / Only supported on architectures $\geq$ Ampere).
+2. Monkey-patch HuggingFace’s `BertSelfAttention` using an efficient attention implementation.
+:::
+
+:::{.fragment}
+```{.python code-line-numbers="13-16|25-32|38-43"}
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from transformers import BertForTokenClassification
+
+class FastSelfAttention(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.num_heads = config.num_attention_heads
+        self.head_size = config.hidden_size // config.num_attention_heads
+        self.all_head_size = config.hidden_size
+
+        self.query = nn.Linear(config.hidden_size, self.all_head_size)
+        self.key   = nn.Linear(config.hidden_size, self.all_head_size)
+        self.value = nn.Linear(config.hidden_size, self.all_head_size)
+        self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
+
+    def forward(self, hidden_states, attention_mask=None):
+        B, L, D = hidden_states.size()
+        # project and reshape for multi-head
+        q = self.query(hidden_states).view(B, L, self.num_heads, self.head_size).permute(0,2,1,3)
+        k = self.key(hidden_states)  .view(B, L, self.num_heads, self.head_size).permute(0,2,1,3)
+        v = self.value(hidden_states).view(B, L, self.num_heads, self.head_size).permute(0,2,1,3)
+
+        # fused scaled‐dot‐product attention
+        dp = self.dropout.p if self.training else 0.0
+        context = F.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=attention_mask,
+            dropout_p=dp,
+            is_causal=False
+        )
+
+        # merge heads
+        context = context.permute(0,2,1,3).contiguous().view(B, L, D)
+        return context
+
+class FastBertForTokenClassification(BertForTokenClassification):
+    def __init__(self, config):
+        super().__init__(config)
+        # replace each layer’s self-attention
+        for layer in self.bert.encoder.layer:
+            layer.attention.self = FastSelfAttention(config)
+```
+:::
+
+
+## Integrating fused kernels to our pipeline
+### Performance 
+I investigated the impact of fused attention Kernels for our model in terms of runtime and memory requirements.  
+
+::: {style="text-align:center;"}
+![**Setup:** PyTorch 2.1.1, single V100 / A40 GPU, batch size 512, seq-len 660 nuclotides (DNA  barcodes)](_img/att_benchmark.png){width=80%}
+::: 
+
+
+This preliminary result is somewhat expected as fused-kernels' improvements in other domains ofetn appear for larger inputs and more specialized hardware. 
 
 # Architectural Optimizations {background-color="#40666e"}
 
-## CNN-based tokenization (AlphaGenome)
+## A recent breakthrough in computational biology: [AlphaGenome](https://deepmind.google/discover/blog/alphagenome-ai-for-better-understanding-the-genome/){.scrollable}
 
-## Jumbo CLS and registers
+[Demo](https://deepmind.google/api/blob/website/media/AlphaGenome-Figure1-Animation-000000.mp4)
 
-## Alternative Positional Ecodings
+:::{.fragment}
+AlphaGenome (DeepMind, June 2025) is the first unifying DNA sequence model that jointly predicts thousands of regulatory readouts (gene expression, chromatin accessibility, 3D contacts, splicing) from up to **1M nucleotides**.
+
+> "By extending “AlphaGenome” beyond proteins into noncoding DNA, it tackles the genome’s “dark matter” with base-level resolution and long-range context.
+:::
+
+
+
+## Architecture & Training {.scrollable}
+### Architecture Overview 
+
+:::: {layout-ncol="2" .fragment}
+::: {style="text-align:center;"}
+![[**Source:** Adapted from (Avsec et al., 2025)]{.scriptsize}](_img/AlphaGenome_Overview.png){width=100%}
+:::
+
+:::{.incremental}
+  - **Conv encoder** extracts local motifs via stacked Conv1D (`DNA embedder(num_channels=768, width=15)`). 
+  - **U-Net pyramid** pools & upsamples for multiscale features.  
+  - **Sparse-Attn transformer** uses sliding windows + Rotary positional Encoding + global tokens for long-range.  
+  - **Classification heads**: separate heads for each genomic track (regression/class).
+:::
+
+::::
+
+
+::: {.fragment style="text-align:center;"}
+![[**Source:** Adapted from (Avsec et al., 2025)]{.scriptsize}](_img/AlphaEvolve_ComprehensiveOverview.png){width=40%}
+:::
+
+## Architecture & training 
+### Training 
+::: {style="text-align:center;"}
+![[**Source:** Adapted from (Avsec et al., 2025)]{.scriptsize}](_img/Alpha%20Genome_Training.png){width=35%}
+:::
+
+::: {.small}
+- **Supervised pretrain** on thousands of experimental tracks (ENCODE, GTEx, 4D Nucleome, FANTOM5) covering hundreds of human & mouse cell types.  
+- **Distillation** via held-out cell-type folds to compress and stabilize predictions.
+:::
+
+## Idea: CNN-Based encoder
+
+Adapted AlphaGenome’s conv frontend into BarcodeBERT. Vision folks might be familiar with this idea through [([Xiao et al, 2021](https://arxiv.org/pdf/2106.14881))]{.scriptsize}:
+
+```{.python code-line-numbers="13-18|20-25|26-37|39-46"}
+class CNN_MLM(nn.Module):
+    def __init__(
+        self,
+        max_len: int,
+        d_model: int = 768,
+        nhead: int = 4,
+        num_layers: int = 3,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.max_len = max_len
+
+        # --- Single Conv block + Norm + Dropout + Pool ---
+        self.conv_1 = nn.Conv1d(5, d_model, kernel_size=4, stride=2, padding=1)
+        self.conv_2 = nn.Conv1d(5, d_model, kernel_size=4, stride=2, padding=1)
+        self.norm = nn.LayerNorm(d_model)
+        self.drop = nn.Dropout(dropout)
+        self.pool = nn.MaxPool1d(kernel_size=2, stride=2)
+
+        # Compute downsampled length
+        # After conv: ceil(max_len/2), after pool: ceil(prev/2)
+        L1 = math.ceil(max_len / 2)
+        L2 = math.ceil(L1 / 2)
+        self.down_len = L2
+
+        # --- Learned positional embeddings ---
+        self.pos_emb = nn.Embedding(self.down_len, d_model)
+
+        # --- BERT-style Transformer ---
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead - 1,
+            dim_feedforward=4 * d_model,
+            dropout=dropout,
+            activation="gelu",
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        # --- Upsampling via ConvTranspose1d x2 ---
+        self.up1 = nn.ConvTranspose1d(d_model, d_model, kernel_size=2, stride=2)
+        self.act_up1 = nn.GELU()
+        self.up2 = nn.ConvTranspose1d(d_model, d_model, kernel_size=2, stride=2)
+        self.act_up2 = nn.GELU()
+
+        # --- Final classification head over 4 bases ---
+        self.classifier = nn.Linear(d_model, 4)
+```
+## Idea: CNN-Based encoder
+### Performance
+Below is a summary of the masked‐language‐modeling (MLM) objective performance when using the CNN tokenizer at different masking ratios:
+
+| Masking Ratio | Unseen Accuracy | Seen Accuracy |  kNN |
+| ------------: | --------------: | ------------: | ---: |
+|           0.5 |            92 % |         100 % | 55 % |
+|           0.6 |            89 % |         100 % | 61 % |
+|           0.7 |            88 % |         100 % | 67 % |
+
+::: {.fragment}
+### Limitations:
+- This taks allows for a more aggressive masking ratio, but it does not translate as a performance improvement. 
+- The decoder is currently a naive linear head.
+- No relative or rotary positional encoding — pure conv + absolute PE.
+- Training was performed on 1x A40 GPU, so timing is not comparable
+:::
+
+## Idea:  Use (more) global tokens 
+
+Bojanowski et al. (Meta AI, 2022) found that vision transformers’ single `[CLS]` token can bottleneck global summarization. Leading to the re-purposing of some tokens by the model as registers. Their idea consisted in prepending a series of learnable tokens that the model can use to enocde useful informations. 
+
+::: {style="text-align:center;"}
+![[**Source:** Adapted from (Darcet et al., 2024)]{.scriptsize}](_img/Registers.png){width=50%}
+:::
+
+## Idea:  Use (larger) global tokens 
+### Jumbo CLS
+::: {.fragment .scriptsize}
+A recent related paper follows-up on that idea and introduced the concept of a **Jumbo** `CLS` token that acts as $J$ parallel register tokens that each learn a different global perspective.
+:::
+
+::: {.fragment .scriptsize}
+Define a single $Jd$-dimensional lerneable parameter and prepend it to inputs. Split it before the MSA to preservedimensionality and flatten the registers to $h\in\mathbb{R}^{Jd}$ to summarize with a dedicated network:
+
+$$
+\hat y = \mathrm{MLP}(h)\in\mathbb{R}^{d}
+$$
+:::
+
+::: {.fragment style="text-align:center;"}
+![[**Source:** Adapted from (Fuller et al., 2025)]{.scriptsize}](_img/Jumbo_CLS.png){width=60%}
+:::
+
+
+
 
 # Preliminary Results {background-color="#40666e"}
 
-## Preliminary Results
-|                     | Apex | xFormers | CNN | Jumbo CLS | Train FLOPs | Params | Hardware @ Training Time | kNN | ZSC |
-| ------------------- | ---- | -------- | --- | --------- | ----------- | ------ | ------------------------ | --- | --- |
-| BarcodeBERT-Pandora | ✖    | ✖        | ✔   | ✖         |             |        |                          |     |     |
-|                     | ✖    | ✖        | ✖   | ✔         |             |        |                          |     |     |
-|                     | ✔    | ✔        | ✖   | ✖         |             |        |                          |     |     |
-|                     | ✔    | ✔        | ✔   | ✖         |             |        |                          |     |     |
-|                     | ✔    | ✔        | ✔   | ✔         |             |        |                          |     |     |
-| BarcodeBERT         | ✖    | ✖        | ✖   | ✖         |             |        |                          |     |     |
-
-## Preliminary Results
-|                     | Pos. Enc. | Train FLOPs | Params | Hardware @ Training Time | kNN | ZSC |
-| ------------------- | --------- | ----------- | ------ | ------------------------ | --- | --- |
-| BarcodeBERT-Pandora | AliBi     |             |        |                          |     |     |
-|                     | RoPE      |             |        |                          |     |     |
-|                     | Sin/Cos   |             |        |                          |     |     |
-|                     | Learned   |             |        |                          |     |     |
-| BarcodeBERT         | AliBi     |             |        |                          |     |     |
-|                     | RoPE      |             |        |                          |     |     |
-|                     | Sin/Cos   |             |        |                          |     |     |
-|                     | Learned   |             |        |                          |     |     |
-
-
-## Conclusion and Future Work 
-
-- **Best recipe** (CNN + AMP + xFormers + ALiBi) → ~3× speedup, ≤1% drop in accuracy
-    
-- **Future work**:
-    
-    - Quantization & low-rank adapters
-    - Mixed-objective encoder–decoder
-    - DNABERT-2 Decoder
-
-
-## References
-
-1. **DNABERT-2**: Ji _et al._, _Bioinformatics_ (2023).
-    
-2. **BarcodeBERT**: Safari _et al._, _ISMB_ (2024).
-    
-3. **AlphaGenome**: DeepMind blog (2025).
-    
-4. **xFormers**: Facebook AI (2023).
-
-
-# Theme {background-color="#40666e"}
-
-## Example slide
-
-### This is a subtitle
-
-Here we have some text that may run over several lines of the slide frame,
-depending on how long it is.
-
-- first item 
-    - A sub item
-
-Next, we'll brief review some theme-specific components.
-
-- Note that _all_ of the standard Reveal.js
-[features](https://quarto.org/docs/presentations/revealjs/)
-can be used with this theme, even if we don't highlight them here.
-
-## Additional theme classes
-
-### Some extra things you can do with the clean theme
-
-Special classes for emphasis
-
-- `.alert` class for default emphasis, e.g. [important note]{.alert}.
-- `.fg` class for custom colour, e.g. [important note]{.fg style="--col: #e64173"}.
-- `.bg` class for custom background, e.g. [important note]{.bg style="--col: #e64173"}.
-
-Cross-references
-
-- `.button` class provides a Beamer-like button, e.g.
-[[Summary]{.button}](#sec-summary)
-
-
-
-
-# Components {background-color="#40666e"}
-
-## Want more?
-
-### See our longer demo slides
-
-We've deliberarely kept this template lean, to get you up and running as fast as
-possible.
-
-We provide a separate
-[demo template](https://github.com/grantmcdermott/quarto-revealjs-clean-demo),
-with more examples for integrating code, tables, figures, etc.
-
-  - See the live demo slides
-  [here](https://grantmcdermott.com/quarto-revealjs-clean-demo/template.html).
-
-## Summary {#sec-summary}
-
-### A minimalist and elegant presentation theme
-
-The Quarto reveal.js clean theme aims to be a minimalist and elegant presention
-theme. Here are some options to get you started:
-
-Add the theme to an existing project.
-
-```{.bash}
-quarto install extension grantmcdermott/quarto-revealjs-clean
-```
-
-... or, create a new project using this slide deck as a lean template.
-
-```{.bash}
-quarto use template grantmcdermott/quarto-revealjs-clean
-```
-
-... or, create a new project using the demo slide deck as a full template.
-
-```{.bash}
-quarto use template grantmcdermott/quarto-revealjs-clean-demo
-```
-
-
-# Abstract
-Motivated by advances in **efficient pretraining** for NLP and CV, I benchmark similar techniques in the domain of DNA barcode sequences.  
-In this talk we will:
-- Review key pretraining strategies for DNA transformers  
-- Introduce **AlphaGenome** (DeepMind) and its architectural novelties  
-- Present our implementation updates (mixed precision, xFormers)  
-- Propose three architectural modifications (CNN tokeniser, jumbo CLS, alternative PE)  
-- Share end-to-end benchmarks: throughput, FLOPs, downstream accuracy  
-
----
-
-## 1. DNA Foundation Models & Pretraining Strategies
-
-1. **Masked Language Modeling (MLM)**  
-   - Randomly mask 15% of input k-mers  
-   - Objective:  
-     $$
-       \mathcal{L}_{\text{MLM}} = -\sum_{i\in \mathcal{M}} \log P(x_i \mid \mathbf{x}_{\setminus \mathcal{M}})
-     $$  
-   - Pros/cons for DNA (small alphabet, repetitive patterns)
-
-2. **Next-Nucleotide Prediction (Autoregressive)**  
-   - Predict \(x_{t}\) given \(\{x_{<t}\}\)  
-   - \(\mathcal{L}_{\text{AR}} = -\sum_{t} \log P(x_t\mid x_{<t})\)
-
-3. **Encoder–Decoder Reconstruction**  
-   - Mask-and-reconstruct one nucleotide at a time  
-   - Sequence-to-sequence loss  
-
-4. **Contrastive & Span-Prediction**  
-   - Contrast positive/negative k-mer windows  
-   - Span corruption → reconstruct spans  
-
----
-
-## 2. AlphaGenome (DeepMind) hello
-
-- **Architecture**  
-  - 24-layer transformer, \(d_{\text{model}}=1024\), 16 heads  
-  - Sparse attention patterns for up to 65k tokens  
-
-- **Pretraining**  
-  - Hybrid MLM + span prediction  
-  - Trained on 1 Gb raw genomic fragments  
-
-- **Key Innovations**  
-  - **Long-Context Sparse Attention** (sliding window + global tokens)  
-  - **Adaptive Span**: learnable attention span per head  
-  - **Per-Residue Loss Masking**: down-weight low-complexity regions  
-
----
-
-## 3. Implementation Updates
-
-### 3.1 Mixed Precision (AMP)
-- **Why?**  Half-precision (FP16) reduces memory footprint by ~50%, doubles tensor throughput.  
-- **How?**  NVIDIA Apex AMP or native `torch.cuda.amp`.  
-- **Mechanism**  
-  1. Forward pass in FP16  
-  2. Loss scaled by \(\alpha\) to avoid underflow  
-  3. Backward pass in FP16, unscale gradients  
-  4. Cast master weights in FP32  
-- **Our Setup**  
-  ```python
-  from torch.cuda.amp import autocast, GradScaler
-
-  scaler = GradScaler()
-  with autocast():
-      loss = model(inputs).loss
-  scaler.scale(loss).backward()
-  scaler.step(optimizer)
-  scaler.update()
-  ```
-
----
-
-## 3.2 xFormers Library
-
-- **Why?** Custom CUDA kernels for attention → up to 1.5× speedup, lower memory.
-    
-- **What:** Fused softmax + matmuls, flash attention fallback
-    
-- **Integration Challenges**
-    
-    - PyTorch 2.0 compatibility
-        
-    - Mixing xFormers ops with standard layers
-        
-    - Handling sequence-length dynamic shapes
-        
-- **Snippet**
-    
-    ```python
-    import xformers.ops as xops
-    attn_output = xops.memory_efficient_attention(q, k, v)
-    ```
-    
----
-
-## 4. Architectural Changes
-
-### 4.1 CNN-Based Tokeniser
-
-- **Why?** Remove discrete k-mer vocabulary; learn features continuously.
-    
-- **How?**
-    
-    - 1D conv stack over one-hot DNA (A,C,G,T)
-        
-    - Output: continuous “token” vectors ∈Rdmodel\in \mathbb{R}^{d_{\text{model}}}
-        
-- **Implementation**
-    
-    ```python
-    class CNNTokenizer(nn.Module):
-        def __init__(self, d_model):
-            super().__init__()
-            self.conv = nn.Sequential(
-                nn.Conv1d(4, d_model, kernel_size=7, padding=3),
-                nn.GELU(),
-                nn.Conv1d(d_model, d_model, kernel_size=5, padding=2)
-            )
-        def forward(self, x):  # x: (B, L, 4)
-            return self.conv(x.transpose(1,2)).transpose(1,2)
-    ```
-    
-- **Challenges**
-    
-    - Aligning variable sequence lengths
-        
-    - Preserving positional granularity
-        
-
----
-
-### 4.2 Jumbo CLS Token
-
-- **Why?** Enrich global summary capacity.
-    
-- **How?**
-    
-    - Replace single CLS embedding c∈Rd\mathbf{c}\in\mathbb{R}^{d} with C∈Rk×d\mathbf{C}\in\mathbb{R}^{k\times d} (e.g. k=4k=4).
-        
-    - Concatenate to input; attend normally.
-        
-- **Effect**
-    
-    - +15 % global feature throughput
-        
-    - Slight 5 % increase in param count
-        
-
----
-
-### 4.3 Alternative Positional Encodings
-
-#### ALiBi
-
-- **Bias** ∝\propto distance between query/key
-    
-- No learned parameters; supports arbitrary lengths
-    
-
-#### Rotary (RoPE)
-
-- **Complex rotation** in each head:
-
-q′,k′=Rot(q,θ), Rot(k,θ) \mathbf{q}',\mathbf{k}' = \mathrm{Rot}(\mathbf{q},\theta),\ \mathrm{Rot}(\mathbf{k},\theta)
-
-#### Sinusoidal
-
-- Classic:  
-$$
-PE(pos,2i)=sin⁡(pos100002i/d)\text{PE}_{(pos,2i)} = \sin\bigl(\tfrac{pos}{10000^{2i/d}}\bigr)$$$$PE(pos,2i+1)=cos⁡(… )\text{PE}_{(pos,2i+1)} = \cos(\dots)$$
-
-
----
-
-## 5. Results
-
-## Results
-
-
-|                     | Apex | xFormers | CNN | Jumbo CLS | Train FLOPs | Params | Hardware @ Training Time | kNN | ZSC |
-| ------------------- | ---- | -------- | --- | --------- | ----------- | ------ | ------------------------ | --- | --- |
-| BarcodeBERT-Pandora | ✖    | ✖        | ✔   | ✖         |             |        |                          |     |     |
-|                     | ✖    | ✖        | ✖   | ✔         |             |        |                          |     |     |
-|                     | ✔    | ✔        | ✖   | ✖         |             |        |                          |     |     |
-|                     | ✔    | ✔        | ✔   | ✖         |             |        |                          |     |     |
-|                     | ✔    | ✔        | ✔   | ✔         |             |        |                          |     |     |
-| BarcodeBERT         | ✖    | ✖        | ✖   | ✖         |             |        |                          |     |     |
-
-
-|                     | Pos. Enc. | Train FLOPs | Params | Hardware @ Training Time | kNN | ZSC |
-| ------------------- | --------- | ----------- | ------ | ------------------------ | --- | --- |
-| BarcodeBERT-Pandora | AliBi     |             |        |                          |     |     |
-|                     | RoPE      |             |        |                          |     |     |
-|                     | Sin/Cos   |             |        |                          |     |     |
-|                     | Learned   |             |        |                          |     |     |
-| BarcodeBERT         | AliBi     |             |        |                          |     |     |
-|                     | RoPE      |             |        |                          |     |     |
-|                     | Sin/Cos   |             |        |                          |     |     |
-|                     | Learned   |             |        |                          |     |     |
-
-
----
-
-### 6. Conclusions & Next Steps
-
-
----
-
-   
+## Summary of preliminary results
+|                     | AMP  | Fused Attn | CNN | Peak Ram (GB) | Hardware @ Training Time | kNN (%) | 
+| ------------------- | ---- | --------   | --- | ------   | ------------------------ | ---          |
+|     BarcodeBERT++   | ✔    | ✖          | ✖   | 21.2     | 07 hr 04 min @ 1x V100    |   73.40      |
+|                     | ✖    | ✔          | ✖   | N / A    |22 hr 37 min @ 1x V100    |   71.46      |
+|                     | ✔    | ✔          | ✖   | N / A    |  07 hr 44 min @ 1x V100   | 73.68        |
+|                     | ✖    | ✖          | ✔   | N / A    | 07 hr 56 min @ 1x A40     |  67.02       |
+| BarcodeBERT         | ✖    | ✖          | ✖   | 25.2     |   22 hr 50 min @ 1x V100 |   70.68      |
+
+
+## Discusison & Future Work
+:::{.incremental}
+- **AMP** delivers ~3× speedup as promised and fused-attention short barcodes are underwhealming.  
+- These results scream refactoring: port to HuggingFace Trainer or Lightning Fabric (or MosaicBERT) to handle AMP, mixed precision, and logging seamlessly.  
+- I was unable to reach the advertised 78.5 % k-NN accuracy on a single V100—indicating either hardware or and hyperparameter sensitivity.  
+- **Next steps**:  
+  - Integrate Jumbo CLS with the CNN tokenizer to shrink model size and speed training.  
+  - Implement a mixed-objective encoder–decoder (MAE-style) decoder.  
+  - Rerun experiments on the DNABERT-2 dataset for direct comparison.  
+:::
+
+## References{.scrollable}
+
+- Bommasani R. et al., “On the Opportunities and Risks of Foundation Models,” _arXiv_ (2021).  
+- He K. et al., “Masked Autoencoders Are Scalable Vision Learners,” _CVPR_ (2022).  
+- Ji Y. et al., “DNABERT-2: a Transformer Model for DNA Sequence,” _Bioinformatics_ (2023).  
+- Safari M. et al., “BarcodeBERT: Transformers for Biodiversity Analysis,” _arXiv_ (2024).  
+- Avsec Ž. et al., “AlphaGenome: Advancing Regulatory Variant Effect Prediction,” _bioRxiv_ (2025).  
+- Dao T. et al., “FlashAttention: Fast and Memory-Efficient Exact Attention,” _NeurIPS_ (2022).  
+- Press O. et al., “Long Sequence Modeling with ALiBi,” _arXiv_ (2022).  
+- Su J. et al., “RoFormer: Enhanced Transformer with Rotary Positional Encoding,” _arXiv_ (2021).  
+- “MosaicBERT: Composable Efficient Transformers,” Databricks Blog (2024).  
+- “Accelerating Large Language Models with Mixed Precision Techniques,” Lightning AI Blog (2023).  
+- “torch.cuda.amp,” PyTorch Documentation (2025).  

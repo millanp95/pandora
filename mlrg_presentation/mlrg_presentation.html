@@ -10,7 +10,7 @@
   <meta name="generator" content="quarto-1.7.32">
 
   <meta name="author" content="Pablo A. Millan Arias">
-  <meta name="dcterms.date" content="2025-07-17">
+  <meta name="dcterms.date" content="2025-07-22">
   <title>“Tips and Tricks” for pre-training DNA foundation models on an academic budget.</title>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -211,7 +211,7 @@ Pablo A. Millan Arias <a href="https://orcid.org/0000-0002-8886-9389" class="qua
     </div>
 </div>
 
-  <p class="date">July 17, 2025</p>
+  <p class="date">July 22, 2025</p>
 </section>
 <section id="outline" class="slide level2">
 <h2>Outline</h2>
@@ -223,17 +223,16 @@ Pablo A. Millan Arias <a href="https://orcid.org/0000-0002-8886-9389" class="qua
 <li><span class="scriptsize">Different pre-training strategies</span></li>
 <li><span class="scriptsize">BarcodeBERT</span></li>
 </ul></li>
-<li>Motivation</li>
-<li>Computational Optimizations
+<li>Motivation (The story of BarcodeMAE)</li>
+<li>Engineering Optimizations
 <ul>
-<li><span class="scriptsize">Mixed precission computation</span></li>
-<li><span class="scriptsize"><code>xFormers</code> library</span></li>
+<li><span class="scriptsize">Mixed precision computation</span></li>
+<li><span class="scriptsize">Fused operations</span></li>
 </ul></li>
 <li>Architectural Optimizations
 <ul>
 <li><span class="scriptsize">CNN-based tokenization (AlphaGenome)</span></li>
 <li><span class="scriptsize">Jumbo CLS and registers</span></li>
-<li><span class="scriptsize">Alternative Positional Ecodings</span></li>
 </ul></li>
 <li>Preliminary Results</li>
 <li>Conclusion and Future Work</li>
@@ -241,842 +240,607 @@ Pablo A. Millan Arias <a href="https://orcid.org/0000-0002-8886-9389" class="qua
 </div>
 </section>
 <section>
-<section id="foundation-models-in-genomics" class="title-slide slide level1 center" data-background-color="#40666e">
-<h1>Foundation models in genomics</h1>
+<section id="foundation-models-for-molecular-information" class="title-slide slide level1 center" data-background-color="#40666e">
+<h1>Foundation models for molecular information</h1>
 
 </section>
-<section id="dna-foundation-models" class="slide level2">
-<h2>DNA foundation models</h2>
-<p>A <strong>foundation model</strong> is any model that is trained on broad data that can be adapted to a wide range of downstream tasks <span class="scriptsize">(<em>Bommasani et al., 2021</em>)</span>.</p>
+<section id="foundation-models-in-the--omics" class="slide level2">
+<h2>Foundation models in the <em>-omics</em></h2>
+<p><em>“A <strong>foundation model</strong> is any model that is trained on broad data and can be adapted to a wide range of downstream tasks”</em> <span class="scriptsize">(<em>Bommasani et al., 2021</em>)</span>.</p>
+<div class="fragment">
 <div class="columns">
 <div class="column" style="width:50%;">
 <ul>
-<li><span class="small">Full understanding of DNA as a language is particularly hard because every genome is composed of several regions corresponding to different abstraction levels</span></li>
-<li><span class="small">Every cell has the same “set of instructions” but it differentiates into various cell types</span></li>
+<li><span class="small">Full understanding of genomic information as a language is particularly hard because every cell has the same “set of instructions” but it differentiates into various cell types</span></li>
+<li><span class="small">Every genome is composed of several regions corresponding to <strong>different abstraction levels</strong> (modalities)</span></li>
 </ul>
 </div><div class="column" style="text-align:center;">
-<p><img data-src="_img/central_dogma.png" style="width:300.0%"> <span class="tiny"><em>Source: Adapted from <a href="https://www.khanacademy.org/science/ap-biology/gene-expression-and-regulation/translation/a/intro-to-gene-expression-central-dogma">Khan Academy</a>.</em></span></p>
+<div class="quarto-figure quarto-figure-center">
+<figure>
+<p><img data-src="_img/central_dogma.png" style="width:300.0%"></p>
+<figcaption><span class="tiny">Source: Adapted from <a href="https://www.khanacademy.org/science/ap-biology/gene-expression-and-regulation/translation/a/intro-to-gene-expression-central-dogma">Khan Academy</a>.</span></figcaption>
+</figure>
+</div>
 </div></div>
+</div>
+<div class="fragment">
+<p>One of the easiest way of tackling this “problem” was developing one model or each data modality.</p>
+</div>
 </section>
-<section id="some-examples" class="slide level2">
-<h2>Some examples</h2>
-
-<img data-src="_img/Evo_ideal_DNA_Language_Model.png" class="quarto-figure quarto-figure-center r-stretch" data-fig-width="50%" data-fig-cap="Source: Adapted from (Nguyen et al., 2024)." data-fig-cap-location="bottom"><ul>
-<li>Since only ~2% of the genome codes for proteins, several specialized models have been develped the DNA regions whose function is fully understood.</li>
-<li>Optimal design choices may vary from one “domain” to another.</li>
-<li>We will focus on the <strong>DNA modality</strong> for the rest of the talk.</li>
+<section id="foundation-models-in-the--omics-1" class="slide level2">
+<h2>Foundation models in the <em>-omics</em></h2>
+<div style="text-align:center;">
+<div class="quarto-figure quarto-figure-center">
+<figure>
+<p><img data-src="_img/Evo_ideal_DNA_Language_Model.png" style="width:50.0%"></p>
+<figcaption><span class="tiny text_center">Source: Adapted from (Nguyen et al., 2024)</span></figcaption>
+</figure>
+</div>
+</div>
+<ul>
+<li class="fragment">Since only ~2% of the genome codes for proteins, several specialized models have been develped the DNA regions whose function is fully understood.</li>
+<li class="fragment">Optimal design choices may vary from one “domain” to another.</li>
+<li class="fragment">We will focus on the <strong>DNA modality</strong> for the rest of the talk.</li>
 </ul>
 </section>
-<section id="concrete-examples" class="slide level2 scrollable">
-<h2>Concrete examples</h2>
-<table class="caption-top">
-<thead>
-<tr class="header">
-<th>Model</th>
-<th>Pre-training Strategy</th>
-<th>Architecture</th>
-<th># Params.</th>
-<th>Pretraining Data</th>
-<th>Downstream Tasks</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td><a href="https://arxiv.org/abs/2311.02401?utm_source=chatgpt.com" title="BarcodeBERT: Transformers for Biodiversity Analysis"><strong>BarcodeBERT</strong></a></td>
-<td>MLM</td>
-<td>BERT-base (12 layers, 768 hidden, 12 heads)</td>
-<td>∼110 M</td>
-<td>∼1.5 M invertebrate DNA barcodes</td>
-<td>Species‐level classification, taxonomic assignment, k-NN, zero-shot clusering</td>
-</tr>
-<tr class="even">
-<td><a href="https://arxiv.org/abs/2306.15794" title="[2306.15794] HyenaDNA: Long-Range Genomic Sequence Modeling at Single Nucleotide Resolution"><strong>HyenaDNA</strong></a></td>
-<td>Next-nucleotide prediction</td>
-<td>Decoder-only SSM - Hyena Architecture</td>
-<td>∼1.6 M</td>
-<td>Human genome</td>
-<td>Regulatory element prediction, enhancer identification, species classification</td>
-</tr>
-<tr class="odd">
-<td><a href="https://arxiv.org/pdf/2403.03234?utm_source=chatgpt.com" title="[PDF] Bi-Directional Equivariant Long-Range DNA Sequence Modeling"><strong>MambaDNA</strong></a></td>
-<td>Next-token prediction</td>
-<td>RC-equivariant state-space “MambaDNA” block</td>
-<td>N/A</td>
-<td>Human (or multi-species) genome</td>
-<td>Variant-effect prediction, reverse-complement tasks</td>
-</tr>
-<tr class="even">
-<td><a href="https://openreview.net/pdf?id=6ohFEFTr10&amp;utm_source=chatgpt.com" title="[PDF] BarcodeMamba: State Space Models for Biodiversity Analysis"><strong>BarcodeMamba</strong></a></td>
-<td>MLM / Next-nucleotide prediction</td>
-<td>Structured State-Space Model (Mamba-2)</td>
-<td>∼9 M</td>
-<td>DNA barcodes</td>
-<td>Species &amp; genus classification (linear probe, 1-NN)</td>
-</tr>
-<tr class="odd">
-<td><strong>Nucleotide Transformer</strong></td>
-<td>Masked LM / next-token prediction (50 M–2.5 B scale)</td>
-<td>Transformer encoder (BERT-style)</td>
-<td>50 M‒2.5 B</td>
-<td>Human (3,202 genomes) &amp; 850 diverse species</td>
-<td>Molecular phenotype prediction, variant effect, enhancer classification</td>
-</tr>
-<tr class="even">
-<td><strong>Alpha Genome</strong></td>
-<td>N/A</td>
-<td>U-Net-style + Transformer backbone</td>
-<td>N/A</td>
-<td>Human &amp; mouse genomes</td>
-<td>Gene regulation prediction, variant effect scoring</td>
-</tr>
-<tr class="odd">
-<td><strong>Evo</strong></td>
-<td>Next-token prediction</td>
-<td>StripedHyena (hybrid conv + attention)</td>
-<td>∼7 B</td>
-<td>Prokaryotic &amp; phage genomes (~300 B tokens)</td>
-<td>Functional annotation, phenotype prediction, generative sequence design</td>
-</tr>
-<tr class="even">
-<td><a href="https://pubmed.ncbi.nlm.nih.gov/39152642/?utm_source=chatgpt.com" title="MycoAI: Fast and accurate taxonomic classification for fungal ITS ..."><strong>MycoAI</strong></a></td>
-<td>N/A</td>
-<td>BERT &amp; CNN ensemble</td>
-<td>N/A</td>
-<td>Fungal ITS barcodes (UNITE)</td>
-<td>Taxonomic classification at genus &amp; species levels</td>
-</tr>
-<tr class="odd">
-<td><a href="https://arxiv.org/abs/2505.17257" title="[2505.17257] JanusDNA: A Powerful Bi-directional Hybrid DNA Foundation Model"><strong>JanusDNA</strong></a></td>
-<td>Hybrid autoregressive + MLM</td>
-<td>Hybrid Mamba + Attention + MoE</td>
-<td>(not specified; outperforms 250× larger)</td>
-<td>Human &amp; multi-species genomes</td>
-<td>Genomic representation benchmarks (binding, variant effect)</td>
-</tr>
-</tbody>
-</table>
+<section id="some-examples-of-dna-fundation-models" class="slide level2 scrollable">
+<h2>Some examples of DNA fundation models</h2>
+<h3 id="many-design-choices-in-dna-foundation-models">Many design Choices in DNA Foundation Models</h3>
+<ul>
+<li><strong>Tokenization:</strong> k-mers / BPE / single-nucleotide<br>
+</li>
+<li><strong>Pretraining objectives:</strong> MLM, autoregressive, span-prediction, supervised, distillation<br>
+</li>
+<li><strong>Architecture:</strong> encoder-only, decoder-only, encoder–decoder, state-space, U-Net, MoE<br>
+</li>
+<li><strong>Positional encodings:</strong> Sinusoidal, RoPE, ALiBi, Learned</li>
+<li><strong>Data domain:</strong> Barcodes, human, multi-species genomes, metagenomes, Fungal ITS<br>
+</li>
+<li><strong>Model scale:</strong> from ~1 M to &gt;40 B parameters</li>
+</ul>
+<div class="fragment">
+<h3 id="representative-models">Representative Models</h3>
+<ul>
+<li><strong>HyenaDNA:</strong> <a href="https://arxiv.org/abs/2306.15794" data-preview-link="true">arXiv:2306.15794</a><br>
+</li>
+<li><strong>MambaDNA:</strong> <a href="https://arxiv.org/abs/2403.03234" data-preview-link="true">arxiv:2403.03234</a><br>
+</li>
+<li><strong>BarcodeBERT:</strong> <a href="https://arxiv.org/abs/2311.02401" data-preview-link="true">arXiv:2311.02401</a><br>
+</li>
+<li><strong>BarcodeMamba:</strong> <a href="https://openreview.net/pdf?id=6ohFEFTr10" data-preview-link="true">OpenReview:6ohFEFTr10</a><br>
+</li>
+<li><strong>Nucleotide Transformer:</strong> <a href="https://www.nature.com/articles/s41592-024-02523-z" data-preview-link="true">Nat. Methods 2024</a><br>
+</li>
+<li><strong>AlphaGenome:</strong> <a href="https://www.biorxiv.org/content/10.1101/2025.06.25.661532v2" data-preview-link="true">biorxiv:2025.06.25.661532v2</a><br>
+</li>
+<li><strong>Evo:</strong> <a href="https://arcinstitute.org/tools/evo" data-preview-link="true">Arc Institute</a><br>
+</li>
+<li><strong>MycoAI:</strong> <a href="https://pubmed.ncbi.nlm.nih.gov/39152642/" data-preview-link="true">PubMed:39152642</a></li>
+<li><strong>JanusDNA:</strong> <a href="https://arxiv.org/abs/2505.17257" data-preview-link="true">arXiv:2505.17257</a></li>
+</ul>
+</div>
 </section>
 <section id="barcodebert" class="slide level2">
 <h2>BarcodeBERT</h2>
-<p>We developed a nice model</p>
+<div style="font-size:0.75em; line-height:1.1; margin:0 1em;">
+<ul>
+<li>BarcodeBERT is a BERT-base transformer model pretrained on ∼1M invertebrate DNA barcodes <span class="small"><em>(Millan Arias et al., 2024)</em></span>.</li>
+<li>It models k-mer co-occurrence via masked LM, randomly masking 50 % of tokens and minimizing <span class="math inline">\(\mathcal{L}_{\text{MLM}}=-\sum_{i\in M}\log P(x_i\mid x_{\setminus M}),\)</span> where <span class="math inline">\(M\)</span> is the set of masked-out tokens.</li>
+</ul>
+<div style="text-align:center;">
 <div class="quarto-figure quarto-figure-center">
 <figure>
-<p><img data-src="_img/BarcodeBERT_arch.png" class="quarto-figure quarto-figure-center" data-fig-cap="Source: Adapted from (Nguyen et al., 2024)." data-fig-cap-location="bottom" height="300"></p>
+<p><img data-src="_img/BarcodeBERT_arch.png" style="width:40.0%"></p>
+<figcaption><span class="tiny">Source: Adapted from (Millan Arias et al., 2024)</span></figcaption>
 </figure>
+</div>
+</div>
+<p>Hidden states serve as features for linear probes or k-NN classification.</p>
 </div>
 </section></section>
 <section>
-<section id="motivation" class="title-slide slide level1 center" data-background-color="#40666e">
-<h1>Motivation</h1>
+<section id="motivation-the-story-of-barcodemae" class="title-slide slide level1 center" data-background-color="#40666e">
+<h1>Motivation: The story of BarcodeMAE</h1>
 
 </section>
-<section id="the-story-of-barcodemae" class="slide level2">
-<h2>The story of BarcodeMAE</h2>
+<section id="barcodemae" class="slide level2">
+<h2>BarcodeMAE</h2>
+<p>Adaptation of MAE (He et al., 2022): Mask 50 % of k-mers, reconstruct via an encoder–decoder architecture</p>
+<div class="fragment">
+<div class="columns">
+<div class="column" style="width:50%;">
+<div class="quarto-figure quarto-figure-center">
+<figure>
+<p><img data-src="_img/BarcodeMAE_arch.png" style="width:76.0%"></p>
+<figcaption><span class="tiny">Source: Adapted from (Safari et al., 2024)</span></figcaption>
+</figure>
+</div>
+</div><div class="column fragment small" style="text-align:center">
+<ul>
+<li><strong>Reviewer request:</strong> rerun experiments on a more general (larger) dataset.<br>
+</li>
+<li><strong>Challenge:</strong> We chose DNABERT-2’s dataset (architecturally similar) but it takes 12 days/train on 4×A40 → unsustainable for iterations<br>
+</li>
+<li><strong>Takeaway:</strong> We need “tips &amp; tricks” for faster prototyping and efficient pretraining.</li>
+<li>I will only consider the GPU that we have “easy” access to <strong><em>(A40, T4, V100, RTX6000)</em></strong>.</li>
+</ul>
+</div></div>
+</div>
 </section></section>
 <section>
-<section id="computational-optimizations" class="title-slide slide level1 center" data-background-color="#40666e">
-<h1>Computational Optimizations</h1>
+<section id="engineering-optimizations" class="title-slide slide level1 center" data-background-color="#40666e">
+<h1>Engineering Optimizations</h1>
 
 </section>
-<section id="mixed-precission-computation-apex" class="slide level2">
-<h2>Mixed precission computation <code>APEX</code></h2>
+<section id="mixed-precision-training-amp" class="slide level2">
+<h2>Mixed Precision Training (AMP)</h2>
+<div class="columns">
+<div class="column" style="width:50%;">
+<h3 class="scrollable" id="floating-point-formats">Floating-Point Formats</h3>
+<div style="text-align:center;">
+<div class="quarto-figure quarto-figure-center">
+<figure>
+<p><img data-src="_img/FP_formats.png" style="width:80.0%"></p>
+<figcaption><span class="tiny">Source: Adapted from <a href="https://lightning.ai/pages/community/tutorial/accelerating-large-language-models-with-mixed-precision-techniques/">Lighting AI</a></span></figcaption>
+</figure>
+</div>
+</div>
+</div><div class="column fragment scriptsize" style="text-align:left">
+<p>The algorithm, first introduced by <span class="tiny">(<em>Narang et al., 2024</em>)</span> requires two steps:</p>
+<ul>
+<li>Porting the model to use the FP16 data type where appropriate.</li>
+<li>Adding loss scaling to preserve small gradient values.</li>
+</ul>
+<p><span class="math display">\[\tilde L = S \times L,\quad g = \tfrac{\partial \tilde L}{S}\]</span></p>
+<p>In Pytorch, “automatic mixed precision training” means training with <span class="scriptsize"><code>torch.autocast</code></span> and <span class="scriptsize"><code>torch.amp.GradScaler</code></span> together.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode numberSource python number-lines code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href=""></a>scaler <span class="op">=</span> GradScaler()</span>
+<span id="cb1-2"><a href=""></a><span class="cf">with</span> autocast():</span>
+<span id="cb1-3"><a href=""></a>    loss <span class="op">=</span> model(input_ids, labels<span class="op">=</span>labels).loss</span>
+<span id="cb1-4"><a href=""></a>scaler.scale(loss).backward()</span>
+<span id="cb1-5"><a href=""></a>scaler.step(optimizer)</span>
+<span id="cb1-6"><a href=""></a>scaler.update()</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<!-- #!-- Delivers \~2× throughput and \~50 % memory savings on V100/T4. -->
+</div></div>
 </section>
-<section id="xformers-library" class="slide level2">
-<h2><code>xFormers</code> library</h2>
+<section id="mixed-precision-training-amp-1" class="slide level2">
+<h2>Mixed Precision Training (AMP)</h2>
+<h3 id="performance">Performance</h3>
+<p>I investigated the impact of AMP for our model in terms of runtime, prediction accuracy, and memory requirements.</p>
+<div style="text-align:center;">
+<div class="quarto-figure quarto-figure-center">
+<figure>
+<p><img data-src="_img/mixed_precision_benchmark.png.png" style="width:65.0%"></p>
+<figcaption><strong>Setup:</strong> PyTorch 2.1.1, single V100 GPU, batch size 512, seq-len 660 nuclotides (DNA barcodes)</figcaption>
+</figure>
+</div>
+</div>
+<p>This preliminary results show ~3.2× speedup &amp; ~16% lower peak GPU memory.</p>
+</section>
+<section id="attention-kernel-implementations" class="slide level2">
+<h2>Attention Kernel Implementations</h2>
+<h3 id="naive-non-fused">Naive (non-fused)</h3>
+<p>GPUs run thousands of threads in lockstep executing the same piece of code (kernel). In deep learning, every op. is implemented as one or more CUDA kernels.</p>
+<p><span class="math display">\[\text{Attn}(Q, K, V) = \text{softmax} \left( \frac{Q K^T}{\sqrt{d}} \right) V \]</span></p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode numberSource python number-lines code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href=""></a>scores <span class="op">=</span> torch.matmul(q, k.transpose(<span class="op">-</span><span class="dv">1</span>, <span class="op">-</span><span class="dv">2</span>)) <span class="op">/</span> math.sqrt(d)</span>
+<span id="cb2-2"><a href=""></a>probs  <span class="op">=</span> torch.softmax(scores, dim<span class="op">=-</span><span class="dv">1</span>)</span>
+<span id="cb2-3"><a href=""></a>y      <span class="op">=</span> torch.matmul(probs, v)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="fragment">
+<p>The previous implementation of attention launches separate kernels for query-key, softmax, and value matmul and stores the entire matrices</p>
+</div>
+</section>
+<section id="attention-kernel-implementations-1" class="slide level2">
+<h2>Attention Kernel Implementations</h2>
+<h3 id="fused-kernels">Fused kernels</h3>
+<p><span class="small">Combine matmul, softmax &amp; dropout in one CUDA pass, cutting activations to <span class="math inline">\(O(L)\)</span> and reducing launch overhead.</span></p>
+<div class="fragment scriptsize quarto-layout-panel" data-layout-ncol="2">
+<div class="quarto-layout-row">
+<div id="first-column" class="quarto-layout-cell" style="flex-basis: 50.0%;justify-content: flex-start;">
+<p>Fused kernels are the foundation of modern efficient attention. Specialized domains and new hardware continue to drive custom kernel work.</p>
+<ul>
+<li><strong>FlashAttention</strong>: Tiling-based, reduce the number of I/O operations but increase FLOPS.</li>
+<li><strong>xFormers</strong>: <code>memory_efficient_attention(q,k,v,attn_bias=bias)</code></li>
+<li><strong>PyTorch 2.0</strong>: <code>torch.scaled_dot_product_attention</code></li>
+<li><strong>Custom kernel design</strong>: DiNO v2 uses custom-made kernels</li>
+</ul>
+</div>
+<div id="second-column" class="quarto-layout-cell" style="flex-basis: 50.0%;justify-content: flex-start;">
+<div style="text-align:center;">
+<div class="quarto-figure quarto-figure-center">
+<figure>
+<p><img data-src="_img/Flash_attn.png" style="width:60.0%"></p>
+<figcaption><span class="tiny"><strong>Source:</strong> Adapted from (Dao et al., 2023)</span></figcaption>
+</figure>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<section id="integrating-fused-kernels-to-our-pipeline" class="slide level2 scrolable">
+<h2>Integrating fused kernels to our pipeline</h2>
+<div class="small">
+<ol type="1">
+<li class="fragment">Refactoring BarcodeBERT under <a href="https://www.databricks.com/blog/mosaicbert">MosaicBERT</a>’s <span class="small">(<em>Portes et al., 2024</em>)</span> composable architecture (Monireh’s work / Only supported on architectures <span class="math inline">\(\geq\)</span> Ampere).</li>
+<li class="fragment">Monkey-patch HuggingFace’s <code>BertSelfAttention</code> using an efficient attention implementation.</li>
+</ol>
+</div>
+<div class="fragment">
+<div class="sourceCode" id="cb3" data-code-line-numbers="13-16|25-32|38-43"><pre class="sourceCode numberSource python number-lines code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href=""></a><span class="im">import</span> torch</span>
+<span id="cb3-2"><a href=""></a><span class="im">import</span> torch.nn <span class="im">as</span> nn</span>
+<span id="cb3-3"><a href=""></a><span class="im">import</span> torch.nn.functional <span class="im">as</span> F</span>
+<span id="cb3-4"><a href=""></a><span class="im">from</span> transformers <span class="im">import</span> BertForTokenClassification</span>
+<span id="cb3-5"><a href=""></a></span>
+<span id="cb3-6"><a href=""></a><span class="kw">class</span> FastSelfAttention(nn.Module):</span>
+<span id="cb3-7"><a href=""></a>    <span class="kw">def</span> <span class="fu">__init__</span>(<span class="va">self</span>, config):</span>
+<span id="cb3-8"><a href=""></a>        <span class="bu">super</span>().<span class="fu">__init__</span>()</span>
+<span id="cb3-9"><a href=""></a>        <span class="va">self</span>.num_heads <span class="op">=</span> config.num_attention_heads</span>
+<span id="cb3-10"><a href=""></a>        <span class="va">self</span>.head_size <span class="op">=</span> config.hidden_size <span class="op">//</span> config.num_attention_heads</span>
+<span id="cb3-11"><a href=""></a>        <span class="va">self</span>.all_head_size <span class="op">=</span> config.hidden_size</span>
+<span id="cb3-12"><a href=""></a></span>
+<span id="cb3-13"><a href=""></a>        <span class="va">self</span>.query <span class="op">=</span> nn.Linear(config.hidden_size, <span class="va">self</span>.all_head_size)</span>
+<span id="cb3-14"><a href=""></a>        <span class="va">self</span>.key   <span class="op">=</span> nn.Linear(config.hidden_size, <span class="va">self</span>.all_head_size)</span>
+<span id="cb3-15"><a href=""></a>        <span class="va">self</span>.value <span class="op">=</span> nn.Linear(config.hidden_size, <span class="va">self</span>.all_head_size)</span>
+<span id="cb3-16"><a href=""></a>        <span class="va">self</span>.dropout <span class="op">=</span> nn.Dropout(config.attention_probs_dropout_prob)</span>
+<span id="cb3-17"><a href=""></a></span>
+<span id="cb3-18"><a href=""></a>    <span class="kw">def</span> forward(<span class="va">self</span>, hidden_states, attention_mask<span class="op">=</span><span class="va">None</span>):</span>
+<span id="cb3-19"><a href=""></a>        B, L, D <span class="op">=</span> hidden_states.size()</span>
+<span id="cb3-20"><a href=""></a>        <span class="co"># project and reshape for multi-head</span></span>
+<span id="cb3-21"><a href=""></a>        q <span class="op">=</span> <span class="va">self</span>.query(hidden_states).view(B, L, <span class="va">self</span>.num_heads, <span class="va">self</span>.head_size).permute(<span class="dv">0</span>,<span class="dv">2</span>,<span class="dv">1</span>,<span class="dv">3</span>)</span>
+<span id="cb3-22"><a href=""></a>        k <span class="op">=</span> <span class="va">self</span>.key(hidden_states)  .view(B, L, <span class="va">self</span>.num_heads, <span class="va">self</span>.head_size).permute(<span class="dv">0</span>,<span class="dv">2</span>,<span class="dv">1</span>,<span class="dv">3</span>)</span>
+<span id="cb3-23"><a href=""></a>        v <span class="op">=</span> <span class="va">self</span>.value(hidden_states).view(B, L, <span class="va">self</span>.num_heads, <span class="va">self</span>.head_size).permute(<span class="dv">0</span>,<span class="dv">2</span>,<span class="dv">1</span>,<span class="dv">3</span>)</span>
+<span id="cb3-24"><a href=""></a></span>
+<span id="cb3-25"><a href=""></a>        <span class="co"># fused scaled‐dot‐product attention</span></span>
+<span id="cb3-26"><a href=""></a>        dp <span class="op">=</span> <span class="va">self</span>.dropout.p <span class="cf">if</span> <span class="va">self</span>.training <span class="cf">else</span> <span class="fl">0.0</span></span>
+<span id="cb3-27"><a href=""></a>        context <span class="op">=</span> F.scaled_dot_product_attention(</span>
+<span id="cb3-28"><a href=""></a>            q, k, v,</span>
+<span id="cb3-29"><a href=""></a>            attn_mask<span class="op">=</span>attention_mask,</span>
+<span id="cb3-30"><a href=""></a>            dropout_p<span class="op">=</span>dp,</span>
+<span id="cb3-31"><a href=""></a>            is_causal<span class="op">=</span><span class="va">False</span></span>
+<span id="cb3-32"><a href=""></a>        )</span>
+<span id="cb3-33"><a href=""></a></span>
+<span id="cb3-34"><a href=""></a>        <span class="co"># merge heads</span></span>
+<span id="cb3-35"><a href=""></a>        context <span class="op">=</span> context.permute(<span class="dv">0</span>,<span class="dv">2</span>,<span class="dv">1</span>,<span class="dv">3</span>).contiguous().view(B, L, D)</span>
+<span id="cb3-36"><a href=""></a>        <span class="cf">return</span> context</span>
+<span id="cb3-37"><a href=""></a></span>
+<span id="cb3-38"><a href=""></a><span class="kw">class</span> FastBertForTokenClassification(BertForTokenClassification):</span>
+<span id="cb3-39"><a href=""></a>    <span class="kw">def</span> <span class="fu">__init__</span>(<span class="va">self</span>, config):</span>
+<span id="cb3-40"><a href=""></a>        <span class="bu">super</span>().<span class="fu">__init__</span>(config)</span>
+<span id="cb3-41"><a href=""></a>        <span class="co"># replace each layer’s self-attention</span></span>
+<span id="cb3-42"><a href=""></a>        <span class="cf">for</span> layer <span class="kw">in</span> <span class="va">self</span>.bert.encoder.layer:</span>
+<span id="cb3-43"><a href=""></a>            layer.attention.<span class="va">self</span> <span class="op">=</span> FastSelfAttention(config)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</div>
+</section>
+<section id="integrating-fused-kernels-to-our-pipeline-1" class="slide level2">
+<h2>Integrating fused kernels to our pipeline</h2>
+<h3 id="performance-1">Performance</h3>
+<p>I investigated the impact of fused attention Kernels for our model in terms of runtime and memory requirements.</p>
+<div style="text-align:center;">
+<div class="quarto-figure quarto-figure-center">
+<figure>
+<p><img data-src="_img/att_benchmark.png" style="width:80.0%"></p>
+<figcaption><strong>Setup:</strong> PyTorch 2.1.1, single V100 / A40 GPU, batch size 512, seq-len 660 nuclotides (DNA barcodes)</figcaption>
+</figure>
+</div>
+</div>
+<p>This preliminary result is somewhat expected as fused-kernels’ improvements in other domains ofetn appear for larger inputs and more specialized hardware.</p>
 </section></section>
 <section>
 <section id="architectural-optimizations" class="title-slide slide level1 center" data-background-color="#40666e">
 <h1>Architectural Optimizations</h1>
 
 </section>
-<section id="cnn-based-tokenization-alphagenome" class="slide level2">
-<h2>CNN-based tokenization (AlphaGenome)</h2>
+<section id="a-recent-breakthrough-in-computational-biology-alphagenome" class="slide level2">
+<h2>A recent breakthrough in computational biology: <a href="https://deepmind.google/discover/blog/alphagenome-ai-for-better-understanding-the-genome/" class="scrollable">AlphaGenome</a></h2>
+<p><a href="https://deepmind.google/api/blob/website/media/AlphaGenome-Figure1-Animation-000000.mp4">Demo</a></p>
+<div class="fragment">
+<p>AlphaGenome (DeepMind, June 2025) is the first unifying DNA sequence model that jointly predicts thousands of regulatory readouts (gene expression, chromatin accessibility, 3D contacts, splicing) from up to <strong>1M nucleotides</strong>.</p>
+<blockquote>
+<p>“By extending “AlphaGenome” beyond proteins into noncoding DNA, it tackles the genome’s “dark matter” with base-level resolution and long-range context.</p>
+</blockquote>
+</div>
 </section>
-<section id="jumbo-cls-and-registers" class="slide level2">
-<h2>Jumbo CLS and registers</h2>
+<section id="architecture-training" class="slide level2 scrollable">
+<h2>Architecture &amp; Training</h2>
+<h3 id="architecture-overview">Architecture Overview</h3>
+<div class="fragment quarto-layout-panel" data-layout-ncol="2">
+<div class="quarto-layout-row">
+<div class="quarto-layout-cell" style="flex-basis: 50.0%;justify-content: flex-start;">
+<div class="quarto-figure quarto-figure-center">
+<figure>
+<p><img data-src="_img/AlphaGenome_Overview.png" style="width:100.0%"></p>
+<figcaption><span class="scriptsize"><strong>Source:</strong> Adapted from (Avsec et al., 2025)</span></figcaption>
+</figure>
+</div>
+</div>
+<div class="quarto-layout-cell" style="flex-basis: 50.0%;justify-content: flex-start;">
+<ul>
+<li class="fragment"><strong>Conv encoder</strong> extracts local motifs via stacked Conv1D (<code>DNA embedder(num_channels=768, width=15)</code>).</li>
+<li class="fragment"><strong>U-Net pyramid</strong> pools &amp; upsamples for multiscale features.<br>
+</li>
+<li class="fragment"><strong>Sparse-Attn transformer</strong> uses sliding windows + Rotary positional Encoding + global tokens for long-range.<br>
+</li>
+<li class="fragment"><strong>Classification heads</strong>: separate heads for each genomic track (regression/class).</li>
+</ul>
+</div>
+</div>
+</div>
+<div class="fragment" style="text-align:center;">
+<div class="quarto-figure quarto-figure-center">
+<figure>
+<p><img data-src="_img/AlphaEvolve_ComprehensiveOverview.png" style="width:40.0%"></p>
+<figcaption><span class="scriptsize"><strong>Source:</strong> Adapted from (Avsec et al., 2025)</span></figcaption>
+</figure>
+</div>
+</div>
 </section>
-<section id="alternative-positional-ecodings" class="slide level2">
-<h2>Alternative Positional Ecodings</h2>
+<section id="architecture-training-1" class="slide level2">
+<h2>Architecture &amp; training</h2>
+<h3 id="training">Training</h3>
+<div style="text-align:center;">
+<div class="quarto-figure quarto-figure-center">
+<figure>
+<p><img data-src="_img/Alpha%20Genome_Training.png" style="width:35.0%"></p>
+<figcaption><span class="scriptsize"><strong>Source:</strong> Adapted from (Avsec et al., 2025)</span></figcaption>
+</figure>
+</div>
+</div>
+<div class="small">
+<ul>
+<li><strong>Supervised pretrain</strong> on thousands of experimental tracks (ENCODE, GTEx, 4D Nucleome, FANTOM5) covering hundreds of human &amp; mouse cell types.<br>
+</li>
+<li><strong>Distillation</strong> via held-out cell-type folds to compress and stabilize predictions.</li>
+</ul>
+</div>
+</section>
+<section id="idea-cnn-based-encoder" class="slide level2">
+<h2>Idea: CNN-Based encoder</h2>
+<p>Adapted AlphaGenome’s conv frontend into BarcodeBERT. Vision folks might be familiar with this idea through <span class="scriptsize">(<a href="https://arxiv.org/pdf/2106.14881">Xiao et al, 2021</a>)</span>:</p>
+<div class="sourceCode" id="cb4" data-code-line-numbers="13-18|20-25|26-37|39-46"><pre class="sourceCode numberSource python number-lines code-with-copy"><code class="sourceCode python"><span id="cb4-1"><a href=""></a><span class="kw">class</span> CNN_MLM(nn.Module):</span>
+<span id="cb4-2"><a href=""></a>    <span class="kw">def</span> <span class="fu">__init__</span>(</span>
+<span id="cb4-3"><a href=""></a>        <span class="va">self</span>,</span>
+<span id="cb4-4"><a href=""></a>        max_len: <span class="bu">int</span>,</span>
+<span id="cb4-5"><a href=""></a>        d_model: <span class="bu">int</span> <span class="op">=</span> <span class="dv">768</span>,</span>
+<span id="cb4-6"><a href=""></a>        nhead: <span class="bu">int</span> <span class="op">=</span> <span class="dv">4</span>,</span>
+<span id="cb4-7"><a href=""></a>        num_layers: <span class="bu">int</span> <span class="op">=</span> <span class="dv">3</span>,</span>
+<span id="cb4-8"><a href=""></a>        dropout: <span class="bu">float</span> <span class="op">=</span> <span class="fl">0.1</span>,</span>
+<span id="cb4-9"><a href=""></a>    ):</span>
+<span id="cb4-10"><a href=""></a>        <span class="bu">super</span>().<span class="fu">__init__</span>()</span>
+<span id="cb4-11"><a href=""></a>        <span class="va">self</span>.max_len <span class="op">=</span> max_len</span>
+<span id="cb4-12"><a href=""></a></span>
+<span id="cb4-13"><a href=""></a>        <span class="co"># --- Single Conv block + Norm + Dropout + Pool ---</span></span>
+<span id="cb4-14"><a href=""></a>        <span class="va">self</span>.conv_1 <span class="op">=</span> nn.Conv1d(<span class="dv">5</span>, d_model, kernel_size<span class="op">=</span><span class="dv">4</span>, stride<span class="op">=</span><span class="dv">2</span>, padding<span class="op">=</span><span class="dv">1</span>)</span>
+<span id="cb4-15"><a href=""></a>        <span class="va">self</span>.conv_2 <span class="op">=</span> nn.Conv1d(<span class="dv">5</span>, d_model, kernel_size<span class="op">=</span><span class="dv">4</span>, stride<span class="op">=</span><span class="dv">2</span>, padding<span class="op">=</span><span class="dv">1</span>)</span>
+<span id="cb4-16"><a href=""></a>        <span class="va">self</span>.norm <span class="op">=</span> nn.LayerNorm(d_model)</span>
+<span id="cb4-17"><a href=""></a>        <span class="va">self</span>.drop <span class="op">=</span> nn.Dropout(dropout)</span>
+<span id="cb4-18"><a href=""></a>        <span class="va">self</span>.pool <span class="op">=</span> nn.MaxPool1d(kernel_size<span class="op">=</span><span class="dv">2</span>, stride<span class="op">=</span><span class="dv">2</span>)</span>
+<span id="cb4-19"><a href=""></a></span>
+<span id="cb4-20"><a href=""></a>        <span class="co"># Compute downsampled length</span></span>
+<span id="cb4-21"><a href=""></a>        <span class="co"># After conv: ceil(max_len/2), after pool: ceil(prev/2)</span></span>
+<span id="cb4-22"><a href=""></a>        L1 <span class="op">=</span> math.ceil(max_len <span class="op">/</span> <span class="dv">2</span>)</span>
+<span id="cb4-23"><a href=""></a>        L2 <span class="op">=</span> math.ceil(L1 <span class="op">/</span> <span class="dv">2</span>)</span>
+<span id="cb4-24"><a href=""></a>        <span class="va">self</span>.down_len <span class="op">=</span> L2</span>
+<span id="cb4-25"><a href=""></a></span>
+<span id="cb4-26"><a href=""></a>        <span class="co"># --- Learned positional embeddings ---</span></span>
+<span id="cb4-27"><a href=""></a>        <span class="va">self</span>.pos_emb <span class="op">=</span> nn.Embedding(<span class="va">self</span>.down_len, d_model)</span>
+<span id="cb4-28"><a href=""></a></span>
+<span id="cb4-29"><a href=""></a>        <span class="co"># --- BERT-style Transformer ---</span></span>
+<span id="cb4-30"><a href=""></a>        encoder_layer <span class="op">=</span> nn.TransformerEncoderLayer(</span>
+<span id="cb4-31"><a href=""></a>            d_model<span class="op">=</span>d_model,</span>
+<span id="cb4-32"><a href=""></a>            nhead<span class="op">=</span>nhead <span class="op">-</span> <span class="dv">1</span>,</span>
+<span id="cb4-33"><a href=""></a>            dim_feedforward<span class="op">=</span><span class="dv">4</span> <span class="op">*</span> d_model,</span>
+<span id="cb4-34"><a href=""></a>            dropout<span class="op">=</span>dropout,</span>
+<span id="cb4-35"><a href=""></a>            activation<span class="op">=</span><span class="st">"gelu"</span>,</span>
+<span id="cb4-36"><a href=""></a>        )</span>
+<span id="cb4-37"><a href=""></a>        <span class="va">self</span>.transformer <span class="op">=</span> nn.TransformerEncoder(encoder_layer, num_layers<span class="op">=</span>num_layers)</span>
+<span id="cb4-38"><a href=""></a></span>
+<span id="cb4-39"><a href=""></a>        <span class="co"># --- Upsampling via ConvTranspose1d x2 ---</span></span>
+<span id="cb4-40"><a href=""></a>        <span class="va">self</span>.up1 <span class="op">=</span> nn.ConvTranspose1d(d_model, d_model, kernel_size<span class="op">=</span><span class="dv">2</span>, stride<span class="op">=</span><span class="dv">2</span>)</span>
+<span id="cb4-41"><a href=""></a>        <span class="va">self</span>.act_up1 <span class="op">=</span> nn.GELU()</span>
+<span id="cb4-42"><a href=""></a>        <span class="va">self</span>.up2 <span class="op">=</span> nn.ConvTranspose1d(d_model, d_model, kernel_size<span class="op">=</span><span class="dv">2</span>, stride<span class="op">=</span><span class="dv">2</span>)</span>
+<span id="cb4-43"><a href=""></a>        <span class="va">self</span>.act_up2 <span class="op">=</span> nn.GELU()</span>
+<span id="cb4-44"><a href=""></a></span>
+<span id="cb4-45"><a href=""></a>        <span class="co"># --- Final classification head over 4 bases ---</span></span>
+<span id="cb4-46"><a href=""></a>        <span class="va">self</span>.classifier <span class="op">=</span> nn.Linear(d_model, <span class="dv">4</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</section>
+<section id="idea-cnn-based-encoder-1" class="slide level2">
+<h2>Idea: CNN-Based encoder</h2>
+<h3 id="performance-2">Performance</h3>
+<p>Below is a summary of the masked‐language‐modeling (MLM) objective performance when using the CNN tokenizer at different masking ratios:</p>
+<table class="caption-top">
+<thead>
+<tr class="header">
+<th style="text-align: right;">Masking Ratio</th>
+<th style="text-align: right;">Unseen Accuracy</th>
+<th style="text-align: right;">Seen Accuracy</th>
+<th style="text-align: right;">kNN</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: right;">0.5</td>
+<td style="text-align: right;">92 %</td>
+<td style="text-align: right;">100 %</td>
+<td style="text-align: right;">55 %</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">0.6</td>
+<td style="text-align: right;">89 %</td>
+<td style="text-align: right;">100 %</td>
+<td style="text-align: right;">61 %</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">0.7</td>
+<td style="text-align: right;">88 %</td>
+<td style="text-align: right;">100 %</td>
+<td style="text-align: right;">67 %</td>
+</tr>
+</tbody>
+</table>
+<div class="fragment">
+<h3 id="limitations">Limitations:</h3>
+<ul>
+<li>This taks allows for a more aggressive masking ratio, but it does not translate as a performance improvement.</li>
+<li>The decoder is currently a naive linear head.</li>
+<li>No relative or rotary positional encoding — pure conv + absolute PE.</li>
+<li>Training was performed on 1x A40 GPU, so timing is not comparable</li>
+</ul>
+</div>
+</section>
+<section id="idea-use-more-global-tokens" class="slide level2">
+<h2>Idea: Use (more) global tokens</h2>
+<p>Bojanowski et al.&nbsp;(Meta AI, 2022) found that vision transformers’ single <code>[CLS]</code> token can bottleneck global summarization. Leading to the re-purposing of some tokens by the model as registers. Their idea consisted in prepending a series of learnable tokens that the model can use to enocde useful informations.</p>
+<div style="text-align:center;">
+<div class="quarto-figure quarto-figure-center">
+<figure>
+<p><img data-src="_img/Registers.png" style="width:50.0%"></p>
+<figcaption><span class="scriptsize"><strong>Source:</strong> Adapted from (Darcet et al., 2024)</span></figcaption>
+</figure>
+</div>
+</div>
+</section>
+<section id="idea-use-larger-global-tokens" class="slide level2">
+<h2>Idea: Use (larger) global tokens</h2>
+<h3 id="jumbo-cls">Jumbo CLS</h3>
+<div class="fragment scriptsize">
+<p>A recent related paper follows-up on that idea and introduced the concept of a <strong>Jumbo</strong> <code>CLS</code> token that acts as <span class="math inline">\(J\)</span> parallel register tokens that each learn a different global perspective.</p>
+</div>
+<div class="fragment scriptsize">
+<p>Define a single <span class="math inline">\(Jd\)</span>-dimensional lerneable parameter and prepend it to inputs. Split it before the MSA to preservedimensionality and flatten the registers to <span class="math inline">\(h\in\mathbb{R}^{Jd}\)</span> to summarize with a dedicated network:</p>
+<p><span class="math display">\[
+\hat y = \mathrm{MLP}(h)\in\mathbb{R}^{d}
+\]</span></p>
+</div>
+<div class="fragment" style="text-align:center;">
+<div class="quarto-figure quarto-figure-center">
+<figure>
+<p><img data-src="_img/Jumbo_CLS.png" style="width:60.0%"></p>
+<figcaption><span class="scriptsize"><strong>Source:</strong> Adapted from (Fuller et al., 2025)</span></figcaption>
+</figure>
+</div>
+</div>
 </section></section>
 <section>
 <section id="preliminary-results" class="title-slide slide level1 center" data-background-color="#40666e">
 <h1>Preliminary Results</h1>
 
 </section>
-<section id="preliminary-results-1" class="slide level2">
-<h2>Preliminary Results</h2>
+<section id="summary-of-preliminary-results" class="slide level2">
+<h2>Summary of preliminary results</h2>
 <table class="caption-top">
 <colgroup>
-<col style="width: 21%">
+<col style="width: 28%">
+<col style="width: 5%">
+<col style="width: 11%">
 <col style="width: 4%">
 <col style="width: 8%">
-<col style="width: 3%">
-<col style="width: 10%">
-<col style="width: 12%">
-<col style="width: 6%">
-<col style="width: 26%">
-<col style="width: 3%">
-<col style="width: 3%">
+<col style="width: 35%">
+<col style="width: 4%">
 </colgroup>
 <thead>
 <tr class="header">
 <th></th>
-<th>Apex</th>
-<th>xFormers</th>
+<th>AMP</th>
+<th>Fused Attn</th>
 <th>CNN</th>
-<th>Jumbo CLS</th>
-<th>Train FLOPs</th>
-<th>Params</th>
+<th>Peak Ram (GB)</th>
 <th>Hardware @ Training Time</th>
-<th>kNN</th>
-<th>ZSC</th>
+<th>kNN (%)</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td>BarcodeBERT-Pandora</td>
-<td>✖</td>
-<td>✖</td>
+<td>BarcodeBERT++</td>
 <td>✔</td>
 <td>✖</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
+<td>✖</td>
+<td>21.2</td>
+<td>07 hr 04 min @ 1x V100</td>
+<td>73.40</td>
 </tr>
 <tr class="even">
 <td></td>
 <td>✖</td>
-<td>✖</td>
-<td>✖</td>
 <td>✔</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
+<td>✖</td>
+<td>N / A</td>
+<td>22 hr 37 min @ 1x V100</td>
+<td>71.46</td>
 </tr>
 <tr class="odd">
 <td></td>
 <td>✔</td>
 <td>✔</td>
 <td>✖</td>
-<td>✖</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
+<td>N / A</td>
+<td>07 hr 44 min @ 1x V100</td>
+<td>73.68</td>
 </tr>
 <tr class="even">
 <td></td>
-<td>✔</td>
-<td>✔</td>
-<td>✔</td>
 <td>✖</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
+<td>✖</td>
+<td>✔</td>
+<td>N / A</td>
+<td>07 hr 56 min @ 1x A40</td>
+<td>67.02</td>
 </tr>
 <tr class="odd">
-<td></td>
-<td>✔</td>
-<td>✔</td>
-<td>✔</td>
-<td>✔</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="even">
 <td>BarcodeBERT</td>
 <td>✖</td>
 <td>✖</td>
 <td>✖</td>
-<td>✖</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
+<td>25.2</td>
+<td>22 hr 50 min @ 1x V100</td>
+<td>70.68</td>
 </tr>
 </tbody>
 </table>
 </section>
-<section id="preliminary-results-2" class="slide level2">
-<h2>Preliminary Results</h2>
-<table class="caption-top">
-<colgroup>
-<col style="width: 25%">
-<col style="width: 12%">
-<col style="width: 14%">
-<col style="width: 8%">
-<col style="width: 32%">
-<col style="width: 4%">
-<col style="width: 4%">
-</colgroup>
-<thead>
-<tr class="header">
-<th></th>
-<th>Pos. Enc.</th>
-<th>Train FLOPs</th>
-<th>Params</th>
-<th>Hardware @ Training Time</th>
-<th>kNN</th>
-<th>ZSC</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td>BarcodeBERT-Pandora</td>
-<td>AliBi</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="even">
-<td></td>
-<td>RoPE</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td></td>
-<td>Sin/Cos</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="even">
-<td></td>
-<td>Learned</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td>BarcodeBERT</td>
-<td>AliBi</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="even">
-<td></td>
-<td>RoPE</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td></td>
-<td>Sin/Cos</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="even">
-<td></td>
-<td>Learned</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-</tbody>
-</table>
-</section>
-<section id="conclusion-and-future-work" class="slide level2">
-<h2>Conclusion and Future Work</h2>
+<section id="discusison-future-work" class="slide level2">
+<h2>Discusison &amp; Future Work</h2>
 <ul>
-<li><p><strong>Best recipe</strong> (CNN + AMP + xFormers + ALiBi) → ~3× speedup, ≤1% drop in accuracy</p></li>
-<li><p><strong>Future work</strong>:</p>
+<li class="fragment"><strong>AMP</strong> delivers ~3× speedup as promised and fused-attention short barcodes are underwhealming.<br>
+</li>
+<li class="fragment">These results scream refactoring: port to HuggingFace Trainer or Lightning Fabric (or MosaicBERT) to handle AMP, mixed precision, and logging seamlessly.<br>
+</li>
+<li class="fragment">I was unable to reach the advertised 78.5 % k-NN accuracy on a single V100—indicating either hardware or and hyperparameter sensitivity.<br>
+</li>
+<li class="fragment"><strong>Next steps</strong>:
 <ul>
-<li>Quantization &amp; low-rank adapters</li>
-<li>Mixed-objective encoder–decoder</li>
-<li>DNABERT-2 Decoder</li>
+<li class="fragment">Integrate Jumbo CLS with the CNN tokenizer to shrink model size and speed training.<br>
+</li>
+<li class="fragment">Implement a mixed-objective encoder–decoder (MAE-style) decoder.<br>
+</li>
+<li class="fragment">Rerun experiments on the DNABERT-2 dataset for direct comparison.<br>
+</li>
 </ul></li>
 </ul>
 </section>
-<section id="references" class="slide level2">
+<section id="references" class="slide level2 scrollable">
 <h2>References</h2>
-<ol type="1">
-<li><p><strong>DNABERT-2</strong>: Ji <em>et al.</em>, <em>Bioinformatics</em> (2023).</p></li>
-<li><p><strong>BarcodeBERT</strong>: Safari <em>et al.</em>, <em>ISMB</em> (2024).</p></li>
-<li><p><strong>AlphaGenome</strong>: DeepMind blog (2025).</p></li>
-<li><p><strong>xFormers</strong>: Facebook AI (2023).</p></li>
-</ol>
-</section></section>
-<section>
-<section id="theme" class="title-slide slide level1 center" data-background-color="#40666e">
-<h1>Theme</h1>
-
-</section>
-<section id="example-slide" class="slide level2">
-<h2>Example slide</h2>
-<h3 id="this-is-a-subtitle">This is a subtitle</h3>
-<p>Here we have some text that may run over several lines of the slide frame, depending on how long it is.</p>
 <ul>
-<li>first item
-<ul>
-<li>A sub item</li>
-</ul></li>
-</ul>
-<p>Next, we’ll brief review some theme-specific components.</p>
-<ul>
-<li>Note that <em>all</em> of the standard Reveal.js <a href="https://quarto.org/docs/presentations/revealjs/">features</a> can be used with this theme, even if we don’t highlight them here.</li>
-</ul>
-</section>
-<section id="additional-theme-classes" class="slide level2">
-<h2>Additional theme classes</h2>
-<h3 id="some-extra-things-you-can-do-with-the-clean-theme">Some extra things you can do with the clean theme</h3>
-<p>Special classes for emphasis</p>
-<ul>
-<li><code>.alert</code> class for default emphasis, e.g.&nbsp;<span class="alert">important note</span>.</li>
-<li><code>.fg</code> class for custom colour, e.g.&nbsp;<span class="fg" style="--col: #e64173">important note</span>.</li>
-<li><code>.bg</code> class for custom background, e.g.&nbsp;<span class="bg" style="--col: #e64173">important note</span>.</li>
-</ul>
-<p>Cross-references</p>
-<ul>
-<li><code>.button</code> class provides a Beamer-like button, e.g. <a href="#/sec-summary"><span class="button">Summary</span></a></li>
-</ul>
-</section></section>
-<section>
-<section id="components" class="title-slide slide level1 center" data-background-color="#40666e">
-<h1>Components</h1>
-
-</section>
-<section id="want-more" class="slide level2">
-<h2>Want more?</h2>
-<h3 id="see-our-longer-demo-slides">See our longer demo slides</h3>
-<p>We’ve deliberarely kept this template lean, to get you up and running as fast as possible.</p>
-<p>We provide a separate <a href="https://github.com/grantmcdermott/quarto-revealjs-clean-demo">demo template</a>, with more examples for integrating code, tables, figures, etc.</p>
-<ul>
-<li>See the live demo slides <a href="https://grantmcdermott.com/quarto-revealjs-clean-demo/template.html">here</a>.</li>
-</ul>
-</section>
-<section id="sec-summary" class="slide level2">
-<h2>Summary</h2>
-<h3 id="a-minimalist-and-elegant-presentation-theme">A minimalist and elegant presentation theme</h3>
-<p>The Quarto reveal.js clean theme aims to be a minimalist and elegant presention theme. Here are some options to get you started:</p>
-<p>Add the theme to an existing project.</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode numberSource bash number-lines code-with-copy"><code class="sourceCode bash"><span id="cb1-1"><a href=""></a><span class="ex">quarto</span> install extension grantmcdermott/quarto-revealjs-clean</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
-<p>… or, create a new project using this slide deck as a lean template.</p>
-<div class="sourceCode" id="cb2"><pre class="sourceCode numberSource bash number-lines code-with-copy"><code class="sourceCode bash"><span id="cb2-1"><a href=""></a><span class="ex">quarto</span> use template grantmcdermott/quarto-revealjs-clean</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
-<p>… or, create a new project using the demo slide deck as a full template.</p>
-<div class="sourceCode" id="cb3"><pre class="sourceCode numberSource bash number-lines code-with-copy"><code class="sourceCode bash"><span id="cb3-1"><a href=""></a><span class="ex">quarto</span> use template grantmcdermott/quarto-revealjs-clean-demo</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
-</section></section>
-<section>
-<section id="abstract" class="title-slide slide level1 center">
-<h1>Abstract</h1>
-<p>Motivated by advances in <strong>efficient pretraining</strong> for NLP and CV, I benchmark similar techniques in the domain of DNA barcode sequences.<br>
-In this talk we will: - Review key pretraining strategies for DNA transformers<br>
-- Introduce <strong>AlphaGenome</strong> (DeepMind) and its architectural novelties<br>
-- Present our implementation updates (mixed precision, xFormers)<br>
-- Propose three architectural modifications (CNN tokeniser, jumbo CLS, alternative PE)<br>
-- Share end-to-end benchmarks: throughput, FLOPs, downstream accuracy</p>
-</section>
-<section id="dna-foundation-models-pretraining-strategies" class="slide level2">
-<h2>1. DNA Foundation Models &amp; Pretraining Strategies</h2>
-<ol type="1">
-<li><strong>Masked Language Modeling (MLM)</strong>
-<ul>
-<li>Randomly mask 15% of input k-mers<br>
+<li>Bommasani R. et al., “On the Opportunities and Risks of Foundation Models,” <em>arXiv</em> (2021).<br>
 </li>
-<li>Objective:<br>
-<span class="math display">\[
-  \mathcal{L}_{\text{MLM}} = -\sum_{i\in \mathcal{M}} \log P(x_i \mid \mathbf{x}_{\setminus \mathcal{M}})
-\]</span><br>
+<li>He K. et al., “Masked Autoencoders Are Scalable Vision Learners,” <em>CVPR</em> (2022).<br>
 </li>
-<li>Pros/cons for DNA (small alphabet, repetitive patterns)</li>
-</ul></li>
-<li><strong>Next-Nucleotide Prediction (Autoregressive)</strong>
-<ul>
-<li>Predict (x_{t}) given ({x_{&lt;t}})<br>
+<li>Ji Y. et al., “DNABERT-2: a Transformer Model for DNA Sequence,” <em>Bioinformatics</em> (2023).<br>
 </li>
-<li>(<em>{} = -</em>{t} P(x_tx_{&lt;t}))</li>
-</ul></li>
-<li><strong>Encoder–Decoder Reconstruction</strong>
-<ul>
-<li>Mask-and-reconstruct one nucleotide at a time<br>
+<li>Safari M. et al., “BarcodeBERT: Transformers for Biodiversity Analysis,” <em>arXiv</em> (2024).<br>
 </li>
-<li>Sequence-to-sequence loss</li>
-</ul></li>
-<li><strong>Contrastive &amp; Span-Prediction</strong>
-<ul>
-<li>Contrast positive/negative k-mer windows<br>
+<li>Avsec Ž. et al., “AlphaGenome: Advancing Regulatory Variant Effect Prediction,” <em>bioRxiv</em> (2025).<br>
 </li>
-<li>Span corruption → reconstruct spans</li>
-</ul></li>
-</ol>
-</section>
-<section id="alphagenome-deepmind-hello" class="slide level2">
-<h2>2. AlphaGenome (DeepMind) hello</h2>
-<ul>
-<li><strong>Architecture</strong>
-<ul>
-<li>24-layer transformer, (d_{}=1024), 16 heads<br>
+<li>Dao T. et al., “FlashAttention: Fast and Memory-Efficient Exact Attention,” <em>NeurIPS</em> (2022).<br>
 </li>
-<li>Sparse attention patterns for up to 65k tokens</li>
-</ul></li>
-<li><strong>Pretraining</strong>
-<ul>
-<li>Hybrid MLM + span prediction<br>
+<li>Press O. et al., “Long Sequence Modeling with ALiBi,” <em>arXiv</em> (2022).<br>
 </li>
-<li>Trained on 1 Gb raw genomic fragments</li>
-</ul></li>
-<li><strong>Key Innovations</strong>
-<ul>
-<li><strong>Long-Context Sparse Attention</strong> (sliding window + global tokens)<br>
+<li>Su J. et al., “RoFormer: Enhanced Transformer with Rotary Positional Encoding,” <em>arXiv</em> (2021).<br>
 </li>
-<li><strong>Adaptive Span</strong>: learnable attention span per head<br>
+<li>“MosaicBERT: Composable Efficient Transformers,” Databricks Blog (2024).<br>
 </li>
-<li><strong>Per-Residue Loss Masking</strong>: down-weight low-complexity regions</li>
-</ul></li>
+<li>“Accelerating Large Language Models with Mixed Precision Techniques,” Lightning AI Blog (2023).<br>
+</li>
+<li>“torch.cuda.amp,” PyTorch Documentation (2025).</li>
 </ul>
-</section>
-<section id="implementation-updates" class="slide level2">
-<h2>3. Implementation Updates</h2>
-<h3 id="mixed-precision-amp">3.1 Mixed Precision (AMP)</h3>
-<ul>
-<li><p><strong>Why?</strong> Half-precision (FP16) reduces memory footprint by ~50%, doubles tensor throughput.<br>
-</p></li>
-<li><p><strong>How?</strong> NVIDIA Apex AMP or native <code>torch.cuda.amp</code>.<br>
-</p></li>
-<li><p><strong>Mechanism</strong></p>
-<ol type="1">
-<li>Forward pass in FP16<br>
-</li>
-<li>Loss scaled by () to avoid underflow<br>
-</li>
-<li>Backward pass in FP16, unscale gradients<br>
-</li>
-<li>Cast master weights in FP32<br>
-</li>
-</ol></li>
-<li><p><strong>Our Setup</strong></p>
-<div class="sourceCode" id="cb4"><pre class="sourceCode numberSource python number-lines code-with-copy"><code class="sourceCode python"><span id="cb4-1"><a href=""></a><span class="im">from</span> torch.cuda.amp <span class="im">import</span> autocast, GradScaler</span>
-<span id="cb4-2"><a href=""></a></span>
-<span id="cb4-3"><a href=""></a>scaler <span class="op">=</span> GradScaler()</span>
-<span id="cb4-4"><a href=""></a><span class="cf">with</span> autocast():</span>
-<span id="cb4-5"><a href=""></a>    loss <span class="op">=</span> model(inputs).loss</span>
-<span id="cb4-6"><a href=""></a>scaler.scale(loss).backward()</span>
-<span id="cb4-7"><a href=""></a>scaler.step(optimizer)</span>
-<span id="cb4-8"><a href=""></a>scaler.update()</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div></li>
-</ul>
-</section>
-<section id="xformers-library-1" class="slide level2">
-<h2>3.2 xFormers Library</h2>
-<ul>
-<li><p><strong>Why?</strong> Custom CUDA kernels for attention → up to 1.5× speedup, lower memory.</p></li>
-<li><p><strong>What:</strong> Fused softmax + matmuls, flash attention fallback</p></li>
-<li><p><strong>Integration Challenges</strong></p>
-<ul>
-<li><p>PyTorch 2.0 compatibility</p></li>
-<li><p>Mixing xFormers ops with standard layers</p></li>
-<li><p>Handling sequence-length dynamic shapes</p></li>
-</ul></li>
-<li><p><strong>Snippet</strong></p>
-<div class="sourceCode" id="cb5"><pre class="sourceCode numberSource python number-lines code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href=""></a><span class="im">import</span> xformers.ops <span class="im">as</span> xops</span>
-<span id="cb5-2"><a href=""></a>attn_output <span class="op">=</span> xops.memory_efficient_attention(q, k, v)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div></li>
-</ul>
-</section>
-<section id="architectural-changes" class="slide level2">
-<h2>4. Architectural Changes</h2>
-<h3 id="cnn-based-tokeniser">4.1 CNN-Based Tokeniser</h3>
-<ul>
-<li><p><strong>Why?</strong> Remove discrete k-mer vocabulary; learn features continuously.</p></li>
-<li><p><strong>How?</strong></p>
-<ul>
-<li><p>1D conv stack over one-hot DNA (A,C,G,T)</p></li>
-<li><p>Output: continuous “token” vectors ∈Rdmodel^{d_{}}</p></li>
-</ul></li>
-<li><p><strong>Implementation</strong></p>
-<div class="sourceCode" id="cb6"><pre class="sourceCode numberSource python number-lines code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href=""></a><span class="kw">class</span> CNNTokenizer(nn.Module):</span>
-<span id="cb6-2"><a href=""></a>    <span class="kw">def</span> <span class="fu">__init__</span>(<span class="va">self</span>, d_model):</span>
-<span id="cb6-3"><a href=""></a>        <span class="bu">super</span>().<span class="fu">__init__</span>()</span>
-<span id="cb6-4"><a href=""></a>        <span class="va">self</span>.conv <span class="op">=</span> nn.Sequential(</span>
-<span id="cb6-5"><a href=""></a>            nn.Conv1d(<span class="dv">4</span>, d_model, kernel_size<span class="op">=</span><span class="dv">7</span>, padding<span class="op">=</span><span class="dv">3</span>),</span>
-<span id="cb6-6"><a href=""></a>            nn.GELU(),</span>
-<span id="cb6-7"><a href=""></a>            nn.Conv1d(d_model, d_model, kernel_size<span class="op">=</span><span class="dv">5</span>, padding<span class="op">=</span><span class="dv">2</span>)</span>
-<span id="cb6-8"><a href=""></a>        )</span>
-<span id="cb6-9"><a href=""></a>    <span class="kw">def</span> forward(<span class="va">self</span>, x):  <span class="co"># x: (B, L, 4)</span></span>
-<span id="cb6-10"><a href=""></a>        <span class="cf">return</span> <span class="va">self</span>.conv(x.transpose(<span class="dv">1</span>,<span class="dv">2</span>)).transpose(<span class="dv">1</span>,<span class="dv">2</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div></li>
-<li><p><strong>Challenges</strong></p>
-<ul>
-<li><p>Aligning variable sequence lengths</p></li>
-<li><p>Preserving positional granularity</p></li>
-</ul></li>
-</ul>
-</section>
-<section class="slide level2">
-
-<h3 id="jumbo-cls-token">4.2 Jumbo CLS Token</h3>
-<ul>
-<li><p><strong>Why?</strong> Enrich global summary capacity.</p></li>
-<li><p><strong>How?</strong></p>
-<ul>
-<li><p>Replace single CLS embedding c∈Rd^{d} with C∈Rk×d^{kd} (e.g.&nbsp;k=4k=4).</p></li>
-<li><p>Concatenate to input; attend normally.</p></li>
-</ul></li>
-<li><p><strong>Effect</strong></p>
-<ul>
-<li><p>+15 % global feature throughput</p></li>
-<li><p>Slight 5 % increase in param count</p></li>
-</ul></li>
-</ul>
-</section>
-<section class="slide level2">
-
-<h3 id="alternative-positional-encodings">4.3 Alternative Positional Encodings</h3>
-<h4 id="alibi">ALiBi</h4>
-<ul>
-<li><p><strong>Bias</strong> ∝distance between query/key</p></li>
-<li><p>No learned parameters; supports arbitrary lengths</p></li>
-</ul>
-<h4 id="rotary-rope">Rotary (RoPE)</h4>
-<ul>
-<li><strong>Complex rotation</strong> in each head:</li>
-</ul>
-<p>q′,k′=Rot(q,θ),&nbsp;Rot(k,θ) ‘,’ = (,),&nbsp;(,)</p>
-<h4 id="sinusoidal">Sinusoidal</h4>
-<ul>
-<li>Classic:<br>
-<span class="math display">\[
-PE(pos,2i)=sin⁡(pos100002i/d)\text{PE}_{(pos,2i)} = \sin\bigl(\tfrac{pos}{10000^{2i/d}}\bigr)\]</span><span class="math display">\[PE(pos,2i+1)=cos⁡(… )\text{PE}_{(pos,2i+1)} = \cos(\dots)\]</span></li>
-</ul>
-</section>
-<section id="results" class="slide level2">
-<h2>5. Results</h2>
-</section>
-<section id="results-1" class="slide level2">
-<h2>Results</h2>
-<table class="caption-top">
-<colgroup>
-<col style="width: 21%">
-<col style="width: 4%">
-<col style="width: 8%">
-<col style="width: 3%">
-<col style="width: 10%">
-<col style="width: 12%">
-<col style="width: 6%">
-<col style="width: 26%">
-<col style="width: 3%">
-<col style="width: 3%">
-</colgroup>
-<thead>
-<tr class="header">
-<th></th>
-<th>Apex</th>
-<th>xFormers</th>
-<th>CNN</th>
-<th>Jumbo CLS</th>
-<th>Train FLOPs</th>
-<th>Params</th>
-<th>Hardware @ Training Time</th>
-<th>kNN</th>
-<th>ZSC</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td>BarcodeBERT-Pandora</td>
-<td>✖</td>
-<td>✖</td>
-<td>✔</td>
-<td>✖</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="even">
-<td></td>
-<td>✖</td>
-<td>✖</td>
-<td>✖</td>
-<td>✔</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td></td>
-<td>✔</td>
-<td>✔</td>
-<td>✖</td>
-<td>✖</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="even">
-<td></td>
-<td>✔</td>
-<td>✔</td>
-<td>✔</td>
-<td>✖</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td></td>
-<td>✔</td>
-<td>✔</td>
-<td>✔</td>
-<td>✔</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="even">
-<td>BarcodeBERT</td>
-<td>✖</td>
-<td>✖</td>
-<td>✖</td>
-<td>✖</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-</tbody>
-</table>
-<table class="caption-top">
-<colgroup>
-<col style="width: 25%">
-<col style="width: 12%">
-<col style="width: 14%">
-<col style="width: 8%">
-<col style="width: 32%">
-<col style="width: 4%">
-<col style="width: 4%">
-</colgroup>
-<thead>
-<tr class="header">
-<th></th>
-<th>Pos. Enc.</th>
-<th>Train FLOPs</th>
-<th>Params</th>
-<th>Hardware @ Training Time</th>
-<th>kNN</th>
-<th>ZSC</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td>BarcodeBERT-Pandora</td>
-<td>AliBi</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="even">
-<td></td>
-<td>RoPE</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td></td>
-<td>Sin/Cos</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="even">
-<td></td>
-<td>Learned</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td>BarcodeBERT</td>
-<td>AliBi</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="even">
-<td></td>
-<td>RoPE</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="odd">
-<td></td>
-<td>Sin/Cos</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-<tr class="even">
-<td></td>
-<td>Learned</td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-<td></td>
-</tr>
-</tbody>
-</table>
-</section>
-<section class="slide level2">
-
-<h3 id="conclusions-next-steps">6. Conclusions &amp; Next Steps</h3>
-</section>
-<section class="slide level2">
-
 
 </section></section>
     </div>

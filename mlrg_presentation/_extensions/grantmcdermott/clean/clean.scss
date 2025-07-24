@@ -338,6 +338,11 @@ $selection-bg: #26351c !default;
   font-variant: small-caps; /* Use small caps for the caption text */
 }
 
+/* Styling figure captions */
+//.caption{
+//   text-align: center;
+//}
+
 // Special catch for etable environment to ensure these table images
 // don't overflow the slide.
 // See: https://lrberge.github.io/fixest/articles/etable_new_features.html
